@@ -6,19 +6,25 @@ import subprocess
 import sys
 
 
-PROJECT_VERSION = "1.1.0"
+PROJECT_VERSION = "1.2.0"
+MINIMUM_PYTHON = (3, 9)
 REQUIRED_DEPENDENCIES = (
     ("requests", "requests", "2.32.4"),
     ("qrcode", "qrcode", "8.2"),
     ("prettytable", "prettytable", "3.10.0"),
     ("colorama", "colorama", "0.4.6"),
     ("pycryptodome", "Crypto", "3.20.0"),
+    ("Pillow", "PIL", "10.4.0"),
 )
 
 
 def version_numbers(value):
     numbers = [int(number) for number in re.findall(r"\d+", value)]
     return tuple((numbers + [0, 0, 0])[:3])
+
+
+def is_frozen():
+    return bool(getattr(sys, "frozen", False))
 
 
 def dependency_problems():
@@ -41,6 +47,13 @@ def dependency_problems():
 
 
 def ensure_dependencies():
+    if sys.version_info < MINIMUM_PYTHON:
+        required_version = ".".join(str(part) for part in MINIMUM_PYTHON)
+        raise SystemExit(f"需要 Python {required_version} 或更高版本，当前版本为 {sys.version.split()[0]}。")
+    if is_frozen():
+        print("依赖环境检查通过（EXE 已内置依赖）。")
+        return
+
     problems = dependency_problems()
     if not problems:
         print("依赖环境检查通过。")
@@ -48,27 +61,29 @@ def ensure_dependencies():
 
     print("检测到缺失或版本过低的依赖，正在自动安装/更新：")
     print("  " + " ".join(problems))
-    pip_check = subprocess.run(
-        [sys.executable, "-m", "pip", "--version"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if pip_check.returncode != 0:
-        subprocess.run([sys.executable, "-m", "ensurepip", "--upgrade"], check=True)
-
-    command = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--upgrade",
-        "--disable-pip-version-check",
-        *problems,
-    ]
     try:
+        pip_check = subprocess.run(
+            [sys.executable, "-m", "pip", "--version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if pip_check.returncode != 0:
+            subprocess.run([sys.executable, "-m", "ensurepip", "--upgrade"], check=True)
+
+        command = [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--disable-pip-version-check",
+            "--timeout",
+            "30",
+            *problems,
+        ]
         subprocess.run(command, check=True)
-    except subprocess.CalledProcessError as exc:
+    except (OSError, subprocess.CalledProcessError) as exc:
         raise SystemExit(
             "依赖自动安装失败。请检查网络和Python写入权限，然后执行：\n"
             f"{sys.executable} -m pip install -r requirements.txt"
@@ -90,6 +105,7 @@ import csv
 import os
 import random
 import tempfile
+import time
 import traceback
 import uuid
 from pathlib import Path
@@ -203,31 +219,97 @@ def set_webvpn(url):
     )
 
 
+def extract_user_identity(datas):
+    if not isinstance(datas, dict):
+        raise RuntimeError("当前用户接口返回格式错误")
+
+    def first_value(keys):
+        for key in keys:
+            value = datas.get(key)
+            if value not in (None, ""):
+                return str(value).strip()
+        return ""
+
+    username = first_value(("userName", "realName", "name"))
+    userid = first_value((
+        "studentNo",
+        "studentNumber",
+        "studentId",
+        "userCode",
+        "userId",
+        "account",
+        "loginName",
+    ))
+    if not username or not userid:
+        raise RuntimeError("登录状态无效")
+    return username, userid
+
+
 def get_current_user():
     response_json = request_json(
         "GET",
         set_webvpn("https://jwxt.neu.edu.cn/jwapp/sys/homeapp/api/home/currentUser.do"),
     )
+    return extract_user_identity(response_json.get("datas"))
+
+
+def show_qr_confirmation(qr_url):
+    """Show a clickable QR dialog and fall back to the terminal when Tk is unavailable."""
+    qr = qrcode.QRCode(box_size=8, border=4)
+    qr.add_data(qr_url)
+    qr.make(fit=True)
+
+    root = None
     try:
-        username = response_json["datas"]["userName"]
-        userid = response_json["datas"]["userId"]
-    except (KeyError, TypeError) as exc:
-        raise RuntimeError("当前用户接口返回格式错误") from exc
-    if not username or userid in (None, ""):
-        raise RuntimeError("登录状态无效")
-    return username, userid
+        import tkinter as tk
+        from PIL import ImageTk
+
+        root = tk.Tk()
+        root.title("NEU WakeUP 扫码登录")
+        root.resizable(False, False)
+        root.attributes("-topmost", True)
+        image = qr.make_image(fill_color="black", back_color="white")
+        photo = ImageTk.PhotoImage(image)
+        confirmed = False
+
+        def confirm_login():
+            nonlocal confirmed
+            confirmed = True
+            root.destroy()
+
+        def cancel_login():
+            root.destroy()
+
+        tk.Label(root, text="请使用绑定东北大学统一身份认证的微信扫码").pack(padx=18, pady=(16, 4))
+        image_label = tk.Label(root, image=photo)
+        image_label.image = photo
+        image_label.pack(padx=18, pady=8)
+        tk.Label(root, text="微信完成授权后，点击下方按钮继续").pack(pady=(0, 8))
+        tk.Button(root, text="我已完成授权，继续", command=confirm_login, width=24).pack(pady=(0, 16))
+        root.protocol("WM_DELETE_WINDOW", cancel_login)
+        root.mainloop()
+        return confirmed
+    except Exception as exc:
+        if root is not None:
+            try:
+                root.destroy()
+            except Exception:
+                pass
+        print(colorama.Fore.YELLOW + f"无法打开二维码窗口，将使用终端二维码：{exc}")
+        qr.print_ascii(invert=True)
+        print(colorama.Fore.LIGHTBLACK_EX + "二维码链接：" + qr_url)
+        input("微信完成授权后按回车继续；取消请直接关闭程序：")
+        return True
 
 
 def perform_qr_login_attempt():
+    session.cookies.clear()
+    session.headers.pop("referer", None)
     u_uuid = str(uuid.uuid4())
     u_qrurl = f"https://pass.neu.edu.cn/tpass/qyQrLogin?uuid={u_uuid}"
     u_checkurl = f"https://pass.neu.edu.cn/tpass/checkQRCodeScan?random={random.random():.16f}&uuid={u_uuid}"
-    qr = qrcode.QRCode()
-    qr.add_data(set_webvpn(u_qrurl))
-    qr.make(fit=True)
-    qr.print_ascii(invert=True)
-    print(colorama.Fore.LIGHTBLACK_EX + "无法扫码？使用微信打开链接：" + set_webvpn(u_qrurl))
-    input("在微信中点击“授权登录”后请按回车继续...")
+    if not show_qr_confirmation(set_webvpn(u_qrurl)):
+        raise RuntimeError("用户取消了扫码登录")
 
     if not using_webvpn:
         checked_request("GET", u_checkurl)
@@ -250,23 +332,47 @@ def perform_qr_login_attempt():
 
 
 def neucas_qr_login(max_attempts=3):
+    if max_attempts < 1:
+        raise ValueError("max_attempts 必须大于 0")
     last_error = None
     for attempt in range(1, max_attempts + 1):
         print(colorama.Fore.YELLOW + f"\n请使用微信扫码登录（第 {attempt}/{max_attempts} 次）")
-        perform_qr_login_attempt()
         try:
+            perform_qr_login_attempt()
             return get_current_user()
         except Exception as exc:
             last_error = exc
             if attempt < max_attempts:
                 print(colorama.Fore.YELLOW + "尚未检测到有效登录，二维码可能已过期，将重新生成。")
+                time.sleep(1)
     raise RuntimeError("扫码登录验证失败，请确认微信授权后重试") from last_error
 
 
 def print_welcome(user=None):
     username, userid = user or get_current_user()
     print(f"\n欢迎您，{username} ({userid})！")
-    return username
+    return username, userid
+
+
+def application_directory():
+    """Return the directory where the script or the packaged EXE lives."""
+    if is_frozen():
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def safe_filename_component(value):
+    component = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", str(value).strip())
+    component = re.sub(r"\s+", "", component).rstrip(". ")
+    if component.upper() in {"CON", "PRN", "AUX", "NUL", "COM1", "LPT1"}:
+        component = "_" + component
+    return component or "unknown"
+
+
+def default_output_path(user):
+    username, userid = user
+    filename = f"{safe_filename_component(username)}{safe_filename_component(userid)}.csv"
+    return application_directory() / filename
 
 
 def term_name_for_code(termcode):
@@ -280,7 +386,7 @@ def is_valid_termcode(termcode):
     return match is not None and int(match.group(1)) + 1 == int(match.group(2))
 
 
-def get_termcode(term_override=None):
+def get_termcode(term_override=None, prompt=True):
     if term_override is not None:
         if not is_valid_termcode(term_override):
             raise ValueError(f"学期代码格式错误：{term_override}")
@@ -291,6 +397,8 @@ def get_termcode(term_override=None):
     termcode = DEFAULT_TERMCODE
     termname = DEFAULT_TERMNAME
     print(f"默认学期为：{termname} ({termcode})")
+    if not prompt:
+        return termcode, termname
     inputtermcode = input("如需更改学期请输入学期代码 (格式如2026-2027-1), 否则直接回车：").strip()
     if inputtermcode:
         if not is_valid_termcode(inputtermcode):
@@ -732,7 +840,8 @@ def write_schedule_csv(rows, output_path):
 def parse_arguments():
     parser = argparse.ArgumentParser(description="东北大学课表导出为WakeUP CSV")
     parser.add_argument("--term", help="指定学期代码，例如 2026-2027-1")
-    parser.add_argument("--output", type=Path, help="指定CSV输出路径，默认写入脚本目录的schedule.csv")
+    parser.add_argument("--output", type=Path, help="指定CSV输出路径，默认使用姓名+学号.csv并写入程序目录")
+    parser.add_argument("--ask-term", action="store_true", help="启动时询问学期；EXE默认直接使用默认学期")
     parser.add_argument("--self-check", action="store_true", help="运行内置解析和CSV检查，不访问教务系统")
     parser.add_argument("--version", action="version", version=f"NEU WakeUP {PROJECT_VERSION}")
     arguments = parser.parse_args()
@@ -753,6 +862,17 @@ def run_self_check():
         raise RuntimeError("实验课解析自检失败")
 
     row = validate_course_row([course_name, 3, 5, 8, detail[2], detail[1], detail[0]])
+    identity = extract_user_identity({"userName": "张三", "userCode": "20261234"})
+    if identity != ("张三", "20261234"):
+        raise RuntimeError("登录身份解析自检失败")
+    if default_output_path(identity).name != "张三20261234.csv":
+        raise RuntimeError("按姓名学号命名自检失败")
+    qr = qrcode.QRCode(box_size=4, border=2)
+    qr.add_data("https://example.com/neuwakeup-self-check")
+    qr.make(fit=True)
+    qr_image = qr.make_image(fill_color="black", back_color="white")
+    if qr_image.size[0] <= 0 or qr_image.size[1] <= 0:
+        raise RuntimeError("二维码图片生成自检失败")
     with tempfile.TemporaryDirectory() as temporary_directory:
         output_path = write_schedule_csv([row], Path(temporary_directory) / "schedule.csv")
         if not output_path.is_file():
@@ -775,21 +895,27 @@ def main():
         return 0
 
     check_network()
-    print("==========使用教程==========")
-    print("1.打开程序，仔细阅读并理解本使用教程，而后按回车键继续")
-    print("2.使用绑定了东北大学微信企业号的微信扫描程序显示的二维码 (或使用微信打开给出的链接)")
-    print("3.扫描二维码，在微信点击授权登录后，在程序中按下回车键，等待运行结束")
-    print("4.核对普通课和实验课预览，导出为WakeUP课程表CSV文件")
-    print(colorama.Fore.YELLOW + "===========警告=============")
-    print(colorama.Fore.YELLOW + "本工具仅提供辅助作用，如果生成的课程表与系统中显示的不一致，请时刻以教务系统中显示的为准！")
-    print(colorama.Fore.YELLOW + "本项目仓库：https://github.com/2711944586/neuwakeup")
-    print(colorama.Fore.YELLOW + "请尽量从本项目仓库获取最新版本，以免出现问题。")
-    print("===========================")
-    input("请仔细阅读上述内容后，按回车键继续...")
+    if is_frozen():
+        print("NEU WakeUP 一键导出模式：二维码窗口即将打开。")
+    else:
+        print("==========使用教程==========")
+        print("1.打开程序，仔细阅读并理解本使用教程，而后按回车键继续")
+        print("2.使用绑定了东北大学微信企业号的微信扫描程序显示的二维码")
+        print("3.扫描二维码，在微信点击授权登录后，在二维码窗口点击确认")
+        print("4.核对普通课和实验课预览，导出为WakeUP课程表CSV文件")
+        print(colorama.Fore.YELLOW + "===========警告=============")
+        print(colorama.Fore.YELLOW + "本工具仅提供辅助作用，如果生成的课程表与系统中显示的不一致，请时刻以教务系统中显示的为准！")
+        print(colorama.Fore.YELLOW + "本项目仓库：https://github.com/2711944586/neuwakeup")
+        print(colorama.Fore.YELLOW + "请尽量从本项目仓库获取最新版本，以免出现问题。")
+        print("===========================")
+        input("请仔细阅读上述内容后，按回车键继续...")
 
     user = neucas_qr_login()
-    print_welcome(user)
-    termcode, termname = get_termcode(arguments.term)
+    user = print_welcome(user)
+    termcode, termname = get_termcode(
+        arguments.term,
+        prompt=not is_frozen() or arguments.ask_term,
+    )
     print(f"获取{termname} ({termcode}) 课程表中...")
     try:
         list_for_csv, primary_error, unarranged_courses = get_complete_schedule(termcode)
@@ -809,14 +935,14 @@ def main():
         prettytable_print(list_for_csv)
         print("导出方式：")
         print("1. 导出至csv文件 (导出至WakeUP课程表)")
-        choice = "1" if arguments.output is not None else input("请选择导出方式(输入数字1): ").strip()
+        choice = "1" if is_frozen() or arguments.output is not None else input("请选择导出方式(输入数字1): ").strip()
         if choice == "1":
-            output_path = arguments.output or (Path(__file__).resolve().parent / "schedule.csv")
+            output_path = arguments.output or default_output_path(user)
             output_path = write_schedule_csv(list_for_csv, output_path)
             print(colorama.Fore.GREEN + f"课程表已成功导出至{output_path}，请使用WakeUP课程表导入该文件。")
             print("   如何导入? https://wakeup.fun/doc/import_from_csv.html")
             print(colorama.Fore.YELLOW + "提示：导入后请与教务系统中的课程表进行比对。如存在区别，请以教务系统显示为准！" + colorama.Style.RESET_ALL)
-            if arguments.output is not None:
+            if is_frozen() or arguments.output is not None:
                 return 0
             input("按回车键退出程序...")
             return 0
