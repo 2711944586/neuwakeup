@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 
-PROJECT_VERSION = "1.3.1"
+PROJECT_VERSION = "1.4.0"
 MINIMUM_PYTHON = (3, 9)
 REQUIRED_DEPENDENCIES = (
     ("requests", "requests", "2.32.4"),
@@ -345,8 +345,14 @@ def show_qr_confirmation(qr_url):
         root.geometry(f"{window_width}x{window_height}+{left}+{top}")
 
         families = set(tkfont.families(root))
-        brand_font = next((name for name in ("Segoe UI Variable Display", "Segoe UI") if name in families), "Segoe UI")
-        ui_font = next((name for name in ("MiSans", "Microsoft YaHei UI", "微软雅黑") if name in families), "Microsoft YaHei UI")
+        if sys.platform == "darwin":
+            brand_candidates = ("SF Pro Display", "Helvetica Neue", "Helvetica")
+            ui_candidates = ("PingFang SC", "Hiragino Sans GB", "Helvetica Neue")
+        else:
+            brand_candidates = ("Segoe UI Variable Display", "Segoe UI")
+            ui_candidates = ("MiSans", "Microsoft YaHei UI", "微软雅黑")
+        brand_font = next((name for name in brand_candidates if name in families), brand_candidates[-1])
+        ui_font = next((name for name in ui_candidates if name in families), ui_candidates[-1])
         bg = "#F6F7F9"
         ink = "#18232D"
         muted = "#687681"
@@ -524,9 +530,23 @@ def print_welcome(user=None):
 
 
 def application_directory():
-    """Return the directory where the script or the packaged EXE lives."""
+    """Return a user-writable directory beside the script or packaged app."""
     if is_frozen():
-        return Path(sys.executable).resolve().parent
+        executable_path = Path(sys.executable).resolve()
+        if sys.platform == "darwin":
+            app_bundle = next(
+                (parent for parent in executable_path.parents if parent.suffix.lower() == ".app"),
+                None,
+            )
+            if app_bundle is not None:
+                beside_app = app_bundle.parent
+                if os.access(beside_app, os.W_OK):
+                    return beside_app
+                downloads = Path.home() / "Downloads"
+                if downloads.is_dir() and os.access(downloads, os.W_OK):
+                    return downloads
+                return Path.home()
+        return executable_path.parent
     return Path(__file__).resolve().parent
 
 

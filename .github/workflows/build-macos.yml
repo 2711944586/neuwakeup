@@ -1,0 +1,113 @@
+name: Build macOS packages
+
+"on":
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            label: Intel
+            expected_arch: x86_64
+            package_suffix: intel
+          - os: macos-15
+            label: Apple Silicon
+            expected_arch: arm64
+            package_suffix: apple-silicon
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.expected_arch }}"
+
+      - name: Import Developer ID certificate
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          certificate_path="$RUNNER_TEMP/developer-id.p12"
+          keychain_path="$RUNNER_TEMP/app-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          printf '%s' "$MACOS_CERTIFICATE" | base64 -D > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+      - name: Build app and installers
+        env:
+          NEU_PACKAGE_SUFFIX: ${{ matrix.package_suffix }}
+        run: |
+          chmod +x build_macos.sh
+          ./build_macos.sh
+
+      - name: Run source and packaged self-checks
+        run: |
+          .build-venv/bin/python neuwakeup.py --self-check
+          codesign --verify --deep --strict dist/NEU-WakeUP.app
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEU-WakeUP-macos-${{ matrix.package_suffix }}
+          if-no-files-found: error
+          path: |
+            dist/NEU-WakeUP-macos-${{ matrix.package_suffix }}.zip
+            dist/NEU-WakeUP-macos-${{ matrix.package_suffix }}.dmg
+            dist/NEU-WakeUP-macos-${{ matrix.package_suffix }}.sha256
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release metadata
+        uses: actions/checkout@v4
+
+      - name: Download macOS packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp dist/NEU-WakeUP.exe release-assets/NEU-WakeUP-windows.exe
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "NEU WakeUP $GITHUB_REF_NAME" \
+            --generate-notes \
+            release-assets/*
