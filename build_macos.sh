@@ -54,23 +54,19 @@ fi
 "$APP_EXECUTABLE" --version
 codesign --verify --deep --strict "$APP_PATH"
 
-ZIP_PATH="$DIST_DIRECTORY/NEU-WakeUP-macos-${PACKAGE_SUFFIX}.zip"
 DMG_PATH="$DIST_DIRECTORY/NEU-WakeUP-macos-${PACKAGE_SUFFIX}.dmg"
-CHECKSUM_PATH="$DIST_DIRECTORY/NEU-WakeUP-macos-${PACKAGE_SUFFIX}.sha256"
+NOTARIZATION_ZIP="$WORK_DIRECTORY/NEU-WakeUP-notarization.zip"
 DMG_STAGING="$WORK_DIRECTORY/dmg"
 
-create_packages() {
-    rm -f "$ZIP_PATH" "$DMG_PATH" "$CHECKSUM_PATH"
+create_dmg() {
+    rm -f "$DMG_PATH"
     rm -rf "$DMG_STAGING"
 
-    ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
     mkdir -p "$DMG_STAGING"
     ditto "$APP_PATH" "$DMG_STAGING/NEU-WakeUP.app"
     ln -s /Applications "$DMG_STAGING/Applications"
     hdiutil create -volname "NEU WakeUP" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH" >/dev/null
 }
-
-create_packages
 
 if [[ -n "${APPLE_ID:-}${APPLE_TEAM_ID:-}${APPLE_APP_PASSWORD:-}" ]]; then
     : "${MACOS_CODESIGN_IDENTITY:?MACOS_CODESIGN_IDENTITY is required for notarization}"
@@ -78,13 +74,19 @@ if [[ -n "${APPLE_ID:-}${APPLE_TEAM_ID:-}${APPLE_APP_PASSWORD:-}" ]]; then
     : "${APPLE_TEAM_ID:?APPLE_TEAM_ID is required for notarization}"
     : "${APPLE_APP_PASSWORD:?APPLE_APP_PASSWORD is required for notarization}"
 
-    xcrun notarytool submit "$ZIP_PATH" \
+    rm -f "$NOTARIZATION_ZIP"
+    ditto -c -k --keepParent "$APP_PATH" "$NOTARIZATION_ZIP"
+    xcrun notarytool submit "$NOTARIZATION_ZIP" \
         --apple-id "$APPLE_ID" \
         --team-id "$APPLE_TEAM_ID" \
         --password "$APPLE_APP_PASSWORD" \
         --wait
     xcrun stapler staple "$APP_PATH"
-    create_packages
+fi
+
+create_dmg
+
+if [[ -n "${APPLE_ID:-}${APPLE_TEAM_ID:-}${APPLE_APP_PASSWORD:-}" ]]; then
     xcrun notarytool submit "$DMG_PATH" \
         --apple-id "$APPLE_ID" \
         --team-id "$APPLE_TEAM_ID" \
@@ -94,13 +96,7 @@ if [[ -n "${APPLE_ID:-}${APPLE_TEAM_ID:-}${APPLE_APP_PASSWORD:-}" ]]; then
     spctl --assess --type execute --verbose=4 "$APP_PATH"
 fi
 
-(
-    cd "$DIST_DIRECTORY"
-    shasum -a 256 "$(basename "$ZIP_PATH")" "$(basename "$DMG_PATH")"
-) > "$CHECKSUM_PATH"
+rm -f "$NOTARIZATION_ZIP"
+rm -rf "$APP_PATH" "$DMG_STAGING"
 
-echo "构建完成："
-echo "  $APP_PATH"
-echo "  $ZIP_PATH"
-echo "  $DMG_PATH"
-echo "  $CHECKSUM_PATH"
+echo "构建完成：$DMG_PATH"

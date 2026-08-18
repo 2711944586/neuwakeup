@@ -11,4 +11,5 @@ schedule.csv
 build/
 dist/*
 !dist/NEU-WakeUP.exe
+!dist/NEU-WakeUP-macos-apple-silicon.dmg
 *.spec

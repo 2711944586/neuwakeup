@@ -4,11 +4,11 @@
 
 ## 直接使用
 
-发布文件位于 GitHub Releases：<https://github.com/2711944586/neuwakeup/releases/latest>
+可直接转发的发布文件都在 `dist` 目录，也可以从 GitHub Releases 下载：<https://github.com/2711944586/neuwakeup/releases/latest>
 
 ### Windows
 
-下载 `NEU-WakeUP-windows.exe`，双击运行。程序不会弹出命令行窗口。
+使用 `dist/NEU-WakeUP.exe`，双击运行。程序不会弹出命令行窗口。
 
 1. 等待二维码窗口出现。
 2. 使用绑定统一身份认证的微信扫码并完成授权。
@@ -17,14 +17,15 @@
 
 ### macOS
 
-根据芯片选择对应文件：
+现代 Apple Silicon Mac 使用单个文件：
 
-- Apple Silicon：`NEU-WakeUP-macos-apple-silicon.dmg`
-- Intel：`NEU-WakeUP-macos-intel.dmg`
+```text
+dist/NEU-WakeUP-macos-apple-silicon.dmg
+```
 
-打开 DMG，将 `NEU-WakeUP.app` 拖入“应用程序”或其他有写入权限的目录，然后双击启动。首次打开若提示无法验证开发者，请右键应用选择“打开”，并确认一次。
+无需安装 Python，也无需拖入“应用程序”。下载后双击 DMG，再双击其中的 `NEU-WakeUP.app` 即可运行。首次打开若提示无法验证开发者，请右键应用选择“打开”，并确认一次。
 
-扫码、确认和导出流程与 Windows 完全一致。CSV 默认写在应用旁边；如果应用所在目录不可写，会自动写入“下载”文件夹，窗口会显示最终保存位置。
+扫码、确认和导出流程与 Windows 完全一致。CSV 会写到 DMG 文件所在目录，文件名为 `{姓名}{学号}.csv`；如果该目录不可写，才会回退到“下载”文件夹。窗口会显示最终保存位置。
 
 打包版本已经内置所有 Python 依赖，使用者不需要安装 Python。网络、登录或课表接口失败时不会生成不完整 CSV。
 
@@ -100,17 +101,14 @@ chmod +x build_macos.sh
 脚本会生成以下文件：
 
 ```text
-dist/NEU-WakeUP.app
-dist/NEU-WakeUP-macos-<架构>.zip
 dist/NEU-WakeUP-macos-<架构>.dmg
-dist/NEU-WakeUP-macos-<架构>.sha256
 ```
 
 其中 `<架构>` 为 `arm64` 或 `x86_64`。脚本使用 `--windowed`，双击应用时不会弹出终端窗口。GitHub Actions 会在 Intel 和 Apple Silicon runner 上分别构建，并在推送 `v*` 标签后自动创建 Release：
 
 ```bash
-git tag v1.4.0
-git push origin v1.4.0
+git tag v1.4.1
+git push origin v1.4.1
 ```
 
 工作流会先执行源码和打包后的 `--self-check`，通过后才上传发布文件。
@@ -135,9 +133,10 @@ neuwakeup/
 ├── neuwakeup.py                 # 课表获取、解析、CSV 导出和登录窗口
 ├── requirements.txt             # 源码依赖
 ├── build_exe.ps1                # Windows 无控制台 EXE 构建脚本
-├── build_macos.sh               # macOS APP、ZIP 和 DMG 构建脚本
+├── build_macos.sh               # macOS 单文件 DMG 构建脚本
 ├── .github/workflows/build-macos.yml  # 双架构 macOS 构建与发布
-├── dist/NEU-WakeUP.exe          # Windows 发布包
+├── dist/NEU-WakeUP.exe          # Windows 单文件发布包
+├── dist/NEU-WakeUP-macos-apple-silicon.dmg  # macOS 单文件发布包
 ├── README.md                    # 使用与构建说明
 └── .gitignore                   # 构建缓存和个人 CSV 忽略规则
 ```

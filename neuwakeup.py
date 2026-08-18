@@ -2,12 +2,13 @@ import importlib
 import importlib.metadata
 import importlib.util
 import os
+import plistlib
 import re
 import subprocess
 import sys
 
 
-PROJECT_VERSION = "1.4.0"
+PROJECT_VERSION = "1.4.1"
 MINIMUM_PYTHON = (3, 9)
 REQUIRED_DEPENDENCIES = (
     ("requests", "requests", "2.32.4"),
@@ -529,6 +530,35 @@ def print_welcome(user=None):
     return username, userid
 
 
+def macos_disk_image_directory(mount_directory):
+    """Resolve the folder containing a mounted app's original DMG."""
+    try:
+        result = subprocess.run(
+            ["hdiutil", "info", "-plist"],
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        payload = plistlib.loads(result.stdout)
+    except (OSError, subprocess.TimeoutExpired, plistlib.InvalidFileException, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    mounted_path = Path(mount_directory).resolve()
+    for image in payload.get("images", []):
+        if not isinstance(image, dict) or not image.get("image-path"):
+            continue
+        for entity in image.get("system-entities", []):
+            if not isinstance(entity, dict) or not entity.get("mount-point"):
+                continue
+            if Path(entity["mount-point"]).resolve() == mounted_path:
+                return Path(image["image-path"]).expanduser().resolve().parent
+    return None
+
+
 def application_directory():
     """Return a user-writable directory beside the script or packaged app."""
     if is_frozen():
@@ -542,6 +572,9 @@ def application_directory():
                 beside_app = app_bundle.parent
                 if os.access(beside_app, os.W_OK):
                     return beside_app
+                beside_disk_image = macos_disk_image_directory(beside_app)
+                if beside_disk_image is not None and os.access(beside_disk_image, os.W_OK):
+                    return beside_disk_image
                 downloads = Path.home() / "Downloads"
                 if downloads.is_dir() and os.access(downloads, os.W_OK):
                     return downloads

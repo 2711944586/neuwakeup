@@ -74,17 +74,15 @@ jobs:
       - name: Run source and packaged self-checks
         run: |
           .build-venv/bin/python neuwakeup.py --self-check
-          codesign --verify --deep --strict dist/NEU-WakeUP.app
+          test -f dist/NEU-WakeUP-macos-${{ matrix.package_suffix }}.dmg
+          hdiutil verify dist/NEU-WakeUP-macos-${{ matrix.package_suffix }}.dmg
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
           name: NEU-WakeUP-macos-${{ matrix.package_suffix }}
           if-no-files-found: error
-          path: |
-            dist/NEU-WakeUP-macos-${{ matrix.package_suffix }}.zip
-            dist/NEU-WakeUP-macos-${{ matrix.package_suffix }}.dmg
-            dist/NEU-WakeUP-macos-${{ matrix.package_suffix }}.sha256
+          path: dist/NEU-WakeUP-macos-${{ matrix.package_suffix }}.dmg
 
   release:
     name: Publish GitHub Release
