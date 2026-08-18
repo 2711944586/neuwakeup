@@ -324,6 +324,8 @@ def show_qr_confirmation(qr_url):
         from PIL import Image, ImageDraw, ImageTk
 
         root = tk.Tk()
+        # Keep Tk's default 1x1 window hidden until the final layout is ready.
+        root.withdraw()
         root.title("NEU WakeUP | 安全登录")
         root.resizable(False, False)
         root.configure(bg="#F6F7F9")
@@ -442,6 +444,9 @@ def show_qr_confirmation(qr_url):
         root.bind("<Return>", lambda _event: confirm_login())
         root.bind("<Escape>", lambda _event: cancel_login())
         root.after(800, lambda: root.attributes("-topmost", False))
+        root.update_idletasks()
+        root.deiconify()
+        root.lift()
         root.mainloop()
         return confirmed
     except Exception as exc:
