@@ -9,5 +9,6 @@ schedule.csv
 .DS_Store
 .build-venv/
 build/
-dist/
+dist/*
+!dist/NEU-WakeUP.exe
 *.spec

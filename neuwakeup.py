@@ -131,6 +131,7 @@ DEFAULT_TERMNAME = "2026-2027年秋季学期"
 CSV_HEADER = ["课程名称", "星期", "开始节数", "结束节数", "老师", "地点", "周数"]
 UNKNOWN_TEACHER = "暂未安排教师"
 UNKNOWN_ROOM = "暂未安排教室"
+WEBVPN_AES_KEY = b"b0A58a69394ce73@"
 
 
 def request_json(method, url, **kwargs):
@@ -189,6 +190,18 @@ def check_network():
     sys.exit(1)
 
 
+def encrypt_webvpn_host(urlroot):
+    """Encrypt a WebVPN host using the protocol's existing compatible format."""
+    cipher = AES.new(
+        WEBVPN_AES_KEY,
+        AES.MODE_CFB,
+        WEBVPN_AES_KEY,
+        segment_size=128,
+    )
+    padded_host = urlroot.ljust(len(urlroot) // 16 * 16 + 16, "\0").encode()
+    return cipher.encrypt(padded_host)[:len(urlroot)].hex()
+
+
 def set_webvpn(url):
     if not using_webvpn:
         return url
@@ -204,16 +217,9 @@ def set_webvpn(url):
         urlpath = prepath + "?vpn-12-o2-pass.neu.edu.cn&" + postpath
         return "https://webvpn.neu.edu.cn/https/62304135386136393339346365373340a0e0b72cc4cb43c8bc1d6f66c806db/" + urlpath
 
-    cipher = AES.new(
-        b"b0A58a69394ce73@",
-        AES.MODE_CFB,
-        b"b0A58a69394ce73@",
-        segment_size=128,
-    )
-    cipher_text = cipher.encrypt(urlroot.ljust(len(urlroot) // 16 * 16 + 16, "\0").encode())
     return (
         f"https://webvpn.neu.edu.cn/{protocol}/62304135386136393339346365373340"
-        + cipher_text[:len(urlroot)].hex()
+        + encrypt_webvpn_host(urlroot)
         + "/"
         + urlpath
     )
@@ -254,7 +260,7 @@ def get_current_user():
 
 
 def show_qr_confirmation(qr_url):
-    """Show a polished QR dialog and fall back to the terminal when Tk is unavailable."""
+    """Show a compact, keyboard-friendly QR dialog and fall back to the terminal."""
     qr = qrcode.QRCode(box_size=8, border=4)
     qr.add_data(qr_url)
     qr.make(fit=True)
@@ -267,9 +273,9 @@ def show_qr_confirmation(qr_url):
         root = tk.Tk()
         root.title("NEU WakeUP | 安全登录")
         root.resizable(False, False)
-        root.configure(bg="#F4F7FA")
+        root.configure(bg="#EEF3F5")
         root.attributes("-topmost", True)
-        window_width, window_height = 560, 660
+        window_width, window_height = 500, 620
         root.geometry(f"{window_width}x{window_height}")
         root.update_idletasks()
         left = max((root.winfo_screenwidth() - window_width) // 2, 0)
@@ -277,127 +283,115 @@ def show_qr_confirmation(qr_url):
         root.geometry(f"{window_width}x{window_height}+{left}+{top}")
 
         font_family = "Microsoft YaHei UI"
-        bg = "#F4F7FA"
-        ink = "#17324D"
-        muted = "#60758A"
-        teal = "#007F86"
+        bg = "#EEF3F5"
+        ink = "#18313F"
+        navy = "#123B49"
+        muted = "#6C7D87"
+        teal = "#008B8F"
+        teal_dark = "#006F74"
         white = "#FFFFFF"
-        header = tk.Frame(root, bg=ink, height=92)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-        tk.Label(
-            header,
-            text="NEU WakeUP",
-            bg=ink,
-            fg=white,
-            font=(font_family, 20, "bold"),
-        ).pack(anchor="w", padx=32, pady=(16, 0))
-        tk.Label(
-            header,
-            text="课程表安全导出",
-            bg=ink,
-            fg="#B9D5D9",
-            font=(font_family, 10),
-        ).pack(anchor="w", padx=34, pady=(4, 0))
+        canvas = tk.Canvas(root, width=window_width, height=window_height, bg=bg, highlightthickness=0)
+        canvas.pack()
 
-        body = tk.Frame(root, bg=bg)
-        body.pack(fill="both", expand=True, padx=32, pady=16)
-        tk.Label(
-            body,
-            text="微信扫码登录",
-            bg=bg,
-            fg=ink,
-            font=(font_family, 15, "bold"),
-        ).pack(anchor="w")
-        tk.Label(
-            body,
-            text="请使用绑定东北大学统一身份认证的微信完成授权",
-            bg=bg,
-            fg=muted,
-            font=(font_family, 9),
-        ).pack(anchor="w", pady=(4, 11))
+        def rounded_rect(x1, y1, x2, y2, radius, fill):
+            radius = min(radius, (x2 - x1) / 2, (y2 - y1) / 2)
+            items = [
+                canvas.create_rectangle(x1 + radius, y1, x2 - radius, y2, fill=fill, outline=""),
+                canvas.create_rectangle(x1, y1 + radius, x2, y2 - radius, fill=fill, outline=""),
+            ]
+            for left, top, start in (
+                (x1, y1, 90),
+                (x2 - 2 * radius, y1, 0),
+                (x1, y2 - 2 * radius, 180),
+                (x2 - 2 * radius, y2 - 2 * radius, 270),
+            ):
+                items.append(canvas.create_arc(
+                    left,
+                    top,
+                    left + 2 * radius,
+                    top + 2 * radius,
+                    start=start,
+                    extent=90,
+                    fill=fill,
+                    outline="",
+                ))
+            return tuple(items)
 
-        qr_card = tk.Frame(body, bg=white, highlightbackground="#D9E2E8", highlightthickness=1)
-        qr_card.pack(fill="x")
-        image = qr.make_image(fill_color="black", back_color="white")
-        image = image.get_image() if hasattr(image, "get_image") else image
-        image = image.resize((280, 280), Image.Resampling.NEAREST)
-        photo = ImageTk.PhotoImage(image)
-        image_label = tk.Label(qr_card, image=photo, bg=white)
-        image_label.image = photo
-        image_label.pack(padx=14, pady=14)
+        # One surface keeps the small dialog calm and easy to scan.
+        rounded_rect(18, 20, 482, 608, 22, "#DCE5E8")
+        rounded_rect(16, 14, 480, 602, 22, white)
+        rounded_rect(16, 14, 480, 132, 22, navy)
+        canvas.create_rectangle(16, 38, 480, 132, fill=navy, outline="")
+        canvas.create_text(44, 50, text="NEU WakeUP", anchor="w", fill=white, font=(font_family, 20, "bold"))
+        canvas.create_text(44, 82, text="课程表安全导出", anchor="w", fill="#B8D2D6", font=(font_family, 10))
+        rounded_rect(367, 38, 452, 68, 14, "#1D5361")
+        canvas.create_text(409, 53, text="扫码授权", fill="#D4ECEC", font=(font_family, 9, "bold"))
 
-        steps = tk.Frame(body, bg=bg)
-        steps.pack(fill="x", pady=(13, 8))
-        for number, text in (("1", "打开微信"), ("2", "完成授权"), ("3", "点击确认")):
-            step = tk.Frame(steps, bg=bg)
-            step.pack(side="left", expand=True)
-            tk.Label(
-                step,
-                text=number,
-                bg=teal,
-                fg=white,
-                font=(font_family, 9, "bold"),
-                width=2,
-                height=1,
-            ).pack()
-            tk.Label(
-                step,
-                text=text,
-                bg=bg,
-                fg=muted,
-                font=(font_family, 9),
-            ).pack(pady=(5, 0))
-
-        status = tk.Label(
-            body,
-            text="等待微信授权...",
-            bg=bg,
-            fg=teal,
+        canvas.create_text(44, 166, text="微信扫码登录", anchor="w", fill=ink, font=(font_family, 15, "bold"))
+        canvas.create_text(
+            44,
+            190,
+            text="使用绑定统一身份认证的微信完成授权",
+            anchor="w",
+            fill=muted,
             font=(font_family, 9),
         )
-        status.pack(pady=(0, 7))
+
+        rounded_rect(103, 212, 393, 480, 19, "#F5F8F9")
+        rounded_rect(113, 222, 383, 470, 13, white)
+        image = qr.make_image(fill_color="black", back_color="white")
+        image = image.get_image() if hasattr(image, "get_image") else image
+        image = image.resize((230, 230), Image.Resampling.NEAREST)
+        photo = ImageTk.PhotoImage(image)
+        canvas.create_image(248, 346, image=photo)
+        canvas.qr_photo = photo
+
+        for x, number, label in ((91, "1", "打开微信"), (248, "2", "完成授权"), (405, "3", "确认登录")):
+            canvas.create_oval(x - 12, 490, x + 12, 514, fill=teal, outline="")
+            canvas.create_text(x, 502, text=number, fill=white, font=(font_family, 9, "bold"))
+            canvas.create_text(x, 526, text=label, fill=muted, font=(font_family, 8))
+
+        rounded_rect(44, 538, 452, 562, 12, "#E8F6F5")
+        status_text = canvas.create_text(248, 550, text="等待微信授权", fill=teal_dark, font=(font_family, 9, "bold"))
         confirmed = False
+        button_enabled = True
+        button_items = ()
+        button_label = None
+
+        def set_status(message, color=teal_dark):
+            canvas.itemconfigure(status_text, text=message, fill=color)
 
         def confirm_login():
-            nonlocal confirmed
+            nonlocal confirmed, button_enabled
+            if not button_enabled:
+                return
             confirmed = True
-            status.config(text="已确认，正在检查登录状态...", fg=teal)
-            confirm_button.config(state="disabled")
+            button_enabled = False
+            set_status("已确认，正在检查登录状态...")
+            for item in button_items:
+                canvas.itemconfigure(item, fill="#9BB9BA")
+            canvas.itemconfigure(button_label, fill="#E8F2F2")
             root.after(120, root.destroy)
 
         def cancel_login():
             root.destroy()
 
-        confirm_button = tk.Button(
-            body,
-            text="我已完成授权，继续",
-            command=confirm_login,
-            bg=teal,
-            activebackground="#006B71",
-            fg=white,
-            activeforeground=white,
-            disabledforeground="#A6B3BD",
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=0,
-            cursor="hand2",
-            font=(font_family, 10, "bold"),
-            padx=18,
-            pady=9,
-        )
-        confirm_button.pack(fill="x")
-        tk.Label(
-            body,
-            text="Enter 确认登录   ·   Esc 取消",
-            bg=bg,
-            fg="#8A9BA8",
-            font=(font_family, 8),
-        ).pack(pady=(6, 0))
+        button_items = rounded_rect(44, 570, 452, 598, 14, teal)
+        button_label = canvas.create_text(248, 584, text="我已完成授权，继续", fill=white, font=(font_family, 10, "bold"))
+
+        def set_button_fill(fill):
+            if button_enabled:
+                for item in button_items:
+                    canvas.itemconfigure(item, fill=fill)
+
+        for item in button_items + (button_label,):
+            canvas.tag_bind(item, "<Button-1>", lambda _event: confirm_login())
+            canvas.tag_bind(item, "<Enter>", lambda _event: set_button_fill("#009B9D"))
+            canvas.tag_bind(item, "<Leave>", lambda _event: set_button_fill(teal))
         root.protocol("WM_DELETE_WINDOW", cancel_login)
         root.bind("<Return>", lambda _event: confirm_login())
         root.bind("<Escape>", lambda _event: cancel_login())
-        root.after(400, lambda: root.attributes("-topmost", False))
+        root.after(700, lambda: root.attributes("-topmost", False))
         root.mainloop()
         return confirmed
     except Exception as exc:
@@ -963,21 +957,24 @@ def parse_arguments():
 
 def run_self_check():
     title_detail = [
-        "[实]商务数据分析与应用-商务数据采集",
-        "13周 袁媛 浑南校区 信息化管理实验室(文管学馆B208) 信息2402(29),信息2401(28)",
+        "[实]示例实验课程",
+        "13周 示例教师 浑南校区 示例实验室(教学楼A101) 班级甲(1),班级乙(2)",
     ]
-    course_name = arranged_course_name("商务数据分析与应用", title_detail)
-    detail = parse_arranged_detail(title_detail[1], "袁媛")
-    expected_detail = ("13周", "信息化管理实验室(文管学馆B208)", "袁媛")
+    course_name = arranged_course_name("示例实验课程", title_detail)
+    detail = parse_arranged_detail(title_detail[1], "示例教师")
+    expected_detail = ("13周", "示例实验室(教学楼A101)", "示例教师")
     if course_name != title_detail[0] or detail != expected_detail:
         raise RuntimeError("实验课解析自检失败")
 
     row = validate_course_row([course_name, 3, 5, 8, detail[2], detail[1], detail[0]])
-    identity = extract_user_identity({"userName": "张三", "userCode": "20261234"})
-    if identity != ("张三", "20261234"):
+    identity = extract_user_identity({"userName": "测试用户", "userCode": "00000000"})
+    if identity != ("测试用户", "00000000"):
         raise RuntimeError("登录身份解析自检失败")
-    if default_output_path(identity).name != "张三20261234.csv":
+    if default_output_path(identity).name != "测试用户00000000.csv":
         raise RuntimeError("按姓名学号命名自检失败")
+    encrypted_host = encrypt_webvpn_host("jwxt.neu.edu.cn")
+    if len(encrypted_host) != len("jwxt.neu.edu.cn") * 2 or not re.fullmatch(r"[0-9a-f]+", encrypted_host):
+        raise RuntimeError("WebVPN加密格式自检失败")
     qr = qrcode.QRCode(box_size=4, border=2)
     qr.add_data("https://example.com/neuwakeup-self-check")
     qr.make(fit=True)

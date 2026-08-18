@@ -11,7 +11,7 @@ Windows 用户直接双击 `dist\NEU-WakeUP.exe`：
 3. 程序验证姓名和学号，自动读取默认学期 `2026-2027-1`。
 4. 完整性检查通过后，在 EXE 同目录生成 `{姓名}{学号}.csv`。
 
-EXE 已内置运行依赖，不需要安装 Python。二维码窗口不可用时，会自动退回终端二维码和回车确认流程。
+EXE 已内置运行依赖，不需要安装 Python。发布包中的 `dist\NEU-WakeUP.exe` 已随仓库提供，下载后可直接运行。二维码窗口不可用时，会自动退回终端二维码和回车确认流程。
 
 ## 从源码运行
 
@@ -40,7 +40,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 & .\build_exe.ps1
 ```
 
-脚本会创建独立的 `.build-venv`，安装依赖和 PyInstaller，并输出 `dist\NEU-WakeUP.exe`。构建目录和 EXE 默认被 Git 忽略，避免把构建产物或个人数据加入源码提交。
+脚本会创建独立的 `.build-venv`，安装依赖和 PyInstaller，并输出 `dist\NEU-WakeUP.exe`。构建缓存会被 Git 忽略，发布用 EXE 保留在 `dist\NEU-WakeUP.exe`，便于 Windows 用户直接使用。
 
 ## 登录与文件名
 
@@ -58,7 +58,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 - 保留 `[实]`、`[实验]`、`[实践]`、`[上机]` 等课程名称。
 - 解析教师、实验室、星期、节次和周次。
-- 删除地点末尾仅用于教务展示的班级分组，例如 `信息2402(29),信息2401(28)`。
+- 删除地点末尾仅用于教务展示的班级分组信息。
 - 过滤停课记录。
 
 没有星期或节次的未排课课程会在终端提示，因为 WakeUP 的 CSV 格式无法表达这类记录。已排课程、实验课数量、时间冲突和未排课程都会在导出前显示。
@@ -131,6 +131,7 @@ neuwakeup/
 ├── neuwakeup.py      # 主程序
 ├── requirements.txt  # Python 依赖
 ├── build_exe.ps1     # Windows EXE 构建脚本
+├── dist\NEU-WakeUP.exe # 可直接运行的 Windows 发布包
 ├── README.md         # 使用说明
 └── .gitignore        # 本地文件忽略规则
 ```

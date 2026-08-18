@@ -24,8 +24,6 @@ if (-not (Test-Path -LiteralPath $buildPython)) {
     --onefile `
     --console `
     --name "NEU-WakeUP" `
-    --collect-all qrcode `
-    --collect-all PIL `
     --hidden-import qrcode.image.pil `
     --hidden-import PIL.ImageTk `
     --distpath $distDirectory `
