@@ -1,7 +1,8 @@
 .venv/
 venv/
 .vscode/
-.github/copilot-instructions.md
+.idea/
 __pycache__/
 *.py[cod]
 schedule.csv
+.DS_Store
