@@ -1,12 +1,13 @@
 import importlib
 import importlib.metadata
 import importlib.util
+import os
 import re
 import subprocess
 import sys
 
 
-PROJECT_VERSION = "1.2.0"
+PROJECT_VERSION = "1.3.0"
 MINIMUM_PYTHON = (3, 9)
 REQUIRED_DEPENDENCIES = (
     ("requests", "requests", "2.32.4"),
@@ -25,6 +26,15 @@ def version_numbers(value):
 
 def is_frozen():
     return bool(getattr(sys, "frozen", False))
+
+
+def configure_frozen_io():
+    """Keep a windowed EXE from writing to a missing console stream."""
+    if not is_frozen():
+        return
+    for stream_name in ("stdout", "stderr"):
+        if getattr(sys, stream_name, None) is None:
+            setattr(sys, stream_name, open(os.devnull, "w", encoding="utf-8"))
 
 
 def dependency_problems():
@@ -97,6 +107,7 @@ def ensure_dependencies():
 
 
 if __name__ == "__main__":
+    configure_frozen_io()
     ensure_dependencies()
 
 
@@ -132,6 +143,10 @@ CSV_HEADER = ["课程名称", "星期", "开始节数", "结束节数", "老师"
 UNKNOWN_TEACHER = "暂未安排教师"
 UNKNOWN_ROOM = "暂未安排教室"
 WEBVPN_AES_KEY = b"b0A58a69394ce73@"
+
+
+class LoginCancelledError(RuntimeError):
+    """Raised when the user closes the QR authorization window."""
 
 
 def request_json(method, url, **kwargs):
@@ -186,7 +201,10 @@ def check_network():
         print(colorama.Fore.RED + "无法访问WebVPN, 发生未知错误, 请稍后重试.")
         print(colorama.Fore.LIGHTBLACK_EX + f"错误信息：\n{traceback.format_exc()}")
 
-    input("按回车键退出程序...")
+    if is_frozen():
+        show_runtime_message("NEU WakeUP", "无法访问教务系统或 WebVPN，请检查网络后重试。", error=True)
+    else:
+        input("按回车键退出程序...")
     sys.exit(1)
 
 
@@ -259,8 +277,27 @@ def get_current_user():
     return extract_user_identity(response_json.get("datas"))
 
 
+def show_runtime_message(title, message, error=False):
+    """Show a user-facing message in a windowed EXE without leaking session data."""
+    if not is_frozen():
+        return
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        dialog_root = tk.Tk()
+        dialog_root.withdraw()
+        if error:
+            messagebox.showerror(title, message, parent=dialog_root)
+        else:
+            messagebox.showinfo(title, message, parent=dialog_root)
+        dialog_root.destroy()
+    except Exception:
+        return
+
+
 def show_qr_confirmation(qr_url):
-    """Show a compact, keyboard-friendly QR dialog and fall back to the terminal."""
+    """Show the login dialog and fall back safely when Tk cannot start."""
     qr = qrcode.QRCode(box_size=8, border=4)
     qr.add_data(qr_url)
     qr.make(fit=True)
@@ -273,9 +310,9 @@ def show_qr_confirmation(qr_url):
         root = tk.Tk()
         root.title("NEU WakeUP | 安全登录")
         root.resizable(False, False)
-        root.configure(bg="#EEF3F5")
+        root.configure(bg="#EEF1F4")
         root.attributes("-topmost", True)
-        window_width, window_height = 500, 620
+        window_width, window_height = 620, 760
         root.geometry(f"{window_width}x{window_height}")
         root.update_idletasks()
         left = max((root.winfo_screenwidth() - window_width) // 2, 0)
@@ -283,12 +320,13 @@ def show_qr_confirmation(qr_url):
         root.geometry(f"{window_width}x{window_height}+{left}+{top}")
 
         font_family = "Microsoft YaHei UI"
-        bg = "#EEF3F5"
-        ink = "#18313F"
-        navy = "#123B49"
-        muted = "#6C7D87"
-        teal = "#008B8F"
-        teal_dark = "#006F74"
+        bg = "#EEF1F4"
+        ink = "#1D2B35"
+        charcoal = "#202C36"
+        muted = "#72808A"
+        coral = "#D66A4C"
+        coral_hover = "#BC5239"
+        coral_dark = "#A94A36"
         white = "#FFFFFF"
         canvas = tk.Canvas(root, width=window_width, height=window_height, bg=bg, highlightthickness=0)
         canvas.pack()
@@ -317,48 +355,42 @@ def show_qr_confirmation(qr_url):
                 ))
             return tuple(items)
 
-        # One surface keeps the small dialog calm and easy to scan.
-        rounded_rect(18, 20, 482, 608, 22, "#DCE5E8")
-        rounded_rect(16, 14, 480, 602, 22, white)
-        rounded_rect(16, 14, 480, 132, 22, navy)
-        canvas.create_rectangle(16, 38, 480, 132, fill=navy, outline="")
-        canvas.create_text(44, 50, text="NEU WakeUP", anchor="w", fill=white, font=(font_family, 20, "bold"))
-        canvas.create_text(44, 82, text="课程表安全导出", anchor="w", fill="#B8D2D6", font=(font_family, 10))
-        rounded_rect(367, 38, 452, 68, 14, "#1D5361")
-        canvas.create_text(409, 53, text="扫码授权", fill="#D4ECEC", font=(font_family, 9, "bold"))
+        # A large single surface gives the QR code room to breathe.
+        rounded_rect(28, 26, 592, 748, 28, "#D9E0E5")
+        rounded_rect(24, 20, 588, 742, 28, white)
+        rounded_rect(24, 20, 588, 174, 28, charcoal)
+        canvas.create_rectangle(24, 52, 588, 174, fill=charcoal, outline="")
+        canvas.create_text(58, 78, text="NEU WakeUP", anchor="w", fill=white, font=(font_family, 25, "bold"))
+        rounded_rect(456, 62, 554, 98, 16, "#344A58")
+        canvas.create_text(505, 80, text="安全登录", fill="#E6EEF1", font=(font_family, 10, "bold"))
 
-        canvas.create_text(44, 166, text="微信扫码登录", anchor="w", fill=ink, font=(font_family, 15, "bold"))
+        canvas.create_text(58, 216, text="微信扫码授权", anchor="w", fill=ink, font=(font_family, 19, "bold"))
         canvas.create_text(
-            44,
-            190,
-            text="使用绑定统一身份认证的微信完成授权",
+            58,
+            246,
+            text="授权完成后点击继续",
             anchor="w",
             fill=muted,
-            font=(font_family, 9),
+            font=(font_family, 11),
         )
 
-        rounded_rect(103, 212, 393, 480, 19, "#F5F8F9")
-        rounded_rect(113, 222, 383, 470, 13, white)
+        rounded_rect(148, 272, 464, 596, 24, "#F3F6F8")
+        rounded_rect(162, 286, 450, 582, 16, white)
         image = qr.make_image(fill_color="black", back_color="white")
         image = image.get_image() if hasattr(image, "get_image") else image
-        image = image.resize((230, 230), Image.Resampling.NEAREST)
+        image = image.resize((280, 280), Image.Resampling.NEAREST)
         photo = ImageTk.PhotoImage(image)
-        canvas.create_image(248, 346, image=photo)
+        canvas.create_image(306, 434, image=photo)
         canvas.qr_photo = photo
 
-        for x, number, label in ((91, "1", "打开微信"), (248, "2", "完成授权"), (405, "3", "确认登录")):
-            canvas.create_oval(x - 12, 490, x + 12, 514, fill=teal, outline="")
-            canvas.create_text(x, 502, text=number, fill=white, font=(font_family, 9, "bold"))
-            canvas.create_text(x, 526, text=label, fill=muted, font=(font_family, 8))
-
-        rounded_rect(44, 538, 452, 562, 12, "#E8F6F5")
-        status_text = canvas.create_text(248, 550, text="等待微信授权", fill=teal_dark, font=(font_family, 9, "bold"))
+        rounded_rect(58, 620, 562, 658, 18, "#FFF1EC")
+        status_text = canvas.create_text(310, 639, text="等待微信授权", fill=coral_dark, font=(font_family, 11, "bold"))
         confirmed = False
         button_enabled = True
         button_items = ()
         button_label = None
 
-        def set_status(message, color=teal_dark):
+        def set_status(message, color=coral_dark):
             canvas.itemconfigure(status_text, text=message, fill=color)
 
         def confirm_login():
@@ -369,15 +401,15 @@ def show_qr_confirmation(qr_url):
             button_enabled = False
             set_status("已确认，正在检查登录状态...")
             for item in button_items:
-                canvas.itemconfigure(item, fill="#9BB9BA")
-            canvas.itemconfigure(button_label, fill="#E8F2F2")
+                canvas.itemconfigure(item, fill="#C7B4AE")
+            canvas.itemconfigure(button_label, fill="#F8EDE9")
             root.after(120, root.destroy)
 
         def cancel_login():
             root.destroy()
 
-        button_items = rounded_rect(44, 570, 452, 598, 14, teal)
-        button_label = canvas.create_text(248, 584, text="我已完成授权，继续", fill=white, font=(font_family, 10, "bold"))
+        button_items = rounded_rect(58, 680, 562, 728, 20, coral)
+        button_label = canvas.create_text(310, 704, text="继续", fill=white, font=(font_family, 12, "bold"))
 
         def set_button_fill(fill):
             if button_enabled:
@@ -386,12 +418,12 @@ def show_qr_confirmation(qr_url):
 
         for item in button_items + (button_label,):
             canvas.tag_bind(item, "<Button-1>", lambda _event: confirm_login())
-            canvas.tag_bind(item, "<Enter>", lambda _event: set_button_fill("#009B9D"))
-            canvas.tag_bind(item, "<Leave>", lambda _event: set_button_fill(teal))
+            canvas.tag_bind(item, "<Enter>", lambda _event: set_button_fill(coral_hover))
+            canvas.tag_bind(item, "<Leave>", lambda _event: set_button_fill(coral))
         root.protocol("WM_DELETE_WINDOW", cancel_login)
         root.bind("<Return>", lambda _event: confirm_login())
         root.bind("<Escape>", lambda _event: cancel_login())
-        root.after(700, lambda: root.attributes("-topmost", False))
+        root.after(800, lambda: root.attributes("-topmost", False))
         root.mainloop()
         return confirmed
     except Exception as exc:
@@ -400,6 +432,13 @@ def show_qr_confirmation(qr_url):
                 root.destroy()
             except Exception:
                 pass
+        if is_frozen():
+            show_runtime_message(
+                "NEU WakeUP",
+                "二维码窗口无法打开，请确认系统支持桌面窗口后重试。",
+                error=True,
+            )
+            return False
         print(colorama.Fore.YELLOW + f"无法打开二维码窗口，将使用终端二维码：{exc}")
         qr.print_ascii(invert=True)
         print(colorama.Fore.LIGHTBLACK_EX + "二维码链接：" + qr_url)
@@ -414,7 +453,7 @@ def perform_qr_login_attempt():
     u_qrurl = f"https://pass.neu.edu.cn/tpass/qyQrLogin?uuid={u_uuid}"
     u_checkurl = f"https://pass.neu.edu.cn/tpass/checkQRCodeScan?random={random.random():.16f}&uuid={u_uuid}"
     if not show_qr_confirmation(set_webvpn(u_qrurl)):
-        raise RuntimeError("用户取消了扫码登录")
+        raise LoginCancelledError("用户取消了扫码登录")
 
     if not using_webvpn:
         checked_request("GET", u_checkurl)
@@ -445,6 +484,8 @@ def neucas_qr_login(max_attempts=3):
         try:
             perform_qr_login_attempt()
             return get_current_user()
+        except LoginCancelledError:
+            raise
         except Exception as exc:
             last_error = exc
             if attempt < max_attempts:
@@ -1021,7 +1062,7 @@ def main():
     user = print_welcome(user)
     termcode, termname = get_termcode(
         arguments.term,
-        prompt=not is_frozen() or arguments.ask_term,
+        prompt=not is_frozen(),
     )
     print(f"获取{termname} ({termcode}) 课程表中...")
     try:
@@ -1029,7 +1070,14 @@ def main():
     except Exception as schedule_error:
         print(colorama.Fore.RED + "完整课程表获取失败")
         print(colorama.Fore.RED + "错误信息：" + str(schedule_error))
-        input("为避免导出遗漏课程，本次不生成CSV。按回车键退出程序...")
+        if is_frozen():
+            show_runtime_message(
+                "课程表获取失败",
+                "完整课程表获取失败，未生成 CSV。请检查网络、登录状态和当前学期是否开放。",
+                error=True,
+            )
+        else:
+            input("为避免导出遗漏课程，本次不生成CSV。按回车键退出程序...")
         return 1
     if primary_error is not None:
         print(colorama.Fore.YELLOW + "“我的课程”接口不可用，已使用完整课表接口生成课程。")
@@ -1049,7 +1097,10 @@ def main():
             print(colorama.Fore.GREEN + f"课程表已成功导出至{output_path}，请使用WakeUP课程表导入该文件。")
             print("   如何导入? https://wakeup.fun/doc/import_from_csv.html")
             print(colorama.Fore.YELLOW + "提示：导入后请与教务系统中的课程表进行比对。如存在区别，请以教务系统显示为准！" + colorama.Style.RESET_ALL)
-            if is_frozen() or arguments.output is not None:
+            if is_frozen():
+                show_runtime_message("导出完成", f"课程表已保存到：\n{output_path}\n\n现在可以在 WakeUP 中导入该 CSV。")
+                return 0
+            if arguments.output is not None:
                 return 0
             input("按回车键退出程序...")
             return 0
@@ -1061,7 +1112,16 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except LoginCancelledError:
+        sys.exit(0)
     except Exception:
-        print(colorama.Fore.RED + "程序运行出现预料之外的异常，错误信息：\n" + traceback.format_exc())
-        input("按回车键退出程序...")
+        if is_frozen():
+            show_runtime_message(
+                "NEU WakeUP 运行失败",
+                "程序未能完成导出，未生成 CSV。请检查网络、登录状态和当前学期后重试。",
+                error=True,
+            )
+        else:
+            print(colorama.Fore.RED + "程序运行出现预料之外的异常，错误信息：\n" + traceback.format_exc())
+            input("按回车键退出程序...")
         sys.exit(1)

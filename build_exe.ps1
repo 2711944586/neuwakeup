@@ -22,7 +22,7 @@ if (-not (Test-Path -LiteralPath $buildPython)) {
     --noconfirm `
     --clean `
     --onefile `
-    --console `
+    --windowed `
     --name "NEU-WakeUP" `
     --hidden-import qrcode.image.pil `
     --hidden-import PIL.ImageTk `
