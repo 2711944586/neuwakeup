@@ -254,7 +254,7 @@ def get_current_user():
 
 
 def show_qr_confirmation(qr_url):
-    """Show a clickable QR dialog and fall back to the terminal when Tk is unavailable."""
+    """Show a polished QR dialog and fall back to the terminal when Tk is unavailable."""
     qr = qrcode.QRCode(box_size=8, border=4)
     qr.add_data(qr_url)
     qr.make(fit=True)
@@ -262,31 +262,142 @@ def show_qr_confirmation(qr_url):
     root = None
     try:
         import tkinter as tk
-        from PIL import ImageTk
+        from PIL import Image, ImageTk
 
         root = tk.Tk()
-        root.title("NEU WakeUP 扫码登录")
+        root.title("NEU WakeUP | 安全登录")
         root.resizable(False, False)
+        root.configure(bg="#F4F7FA")
         root.attributes("-topmost", True)
+        window_width, window_height = 560, 660
+        root.geometry(f"{window_width}x{window_height}")
+        root.update_idletasks()
+        left = max((root.winfo_screenwidth() - window_width) // 2, 0)
+        top = max((root.winfo_screenheight() - window_height) // 2, 0)
+        root.geometry(f"{window_width}x{window_height}+{left}+{top}")
+
+        font_family = "Microsoft YaHei UI"
+        bg = "#F4F7FA"
+        ink = "#17324D"
+        muted = "#60758A"
+        teal = "#007F86"
+        white = "#FFFFFF"
+        header = tk.Frame(root, bg=ink, height=92)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(
+            header,
+            text="NEU WakeUP",
+            bg=ink,
+            fg=white,
+            font=(font_family, 20, "bold"),
+        ).pack(anchor="w", padx=32, pady=(16, 0))
+        tk.Label(
+            header,
+            text="课程表安全导出",
+            bg=ink,
+            fg="#B9D5D9",
+            font=(font_family, 10),
+        ).pack(anchor="w", padx=34, pady=(4, 0))
+
+        body = tk.Frame(root, bg=bg)
+        body.pack(fill="both", expand=True, padx=32, pady=16)
+        tk.Label(
+            body,
+            text="微信扫码登录",
+            bg=bg,
+            fg=ink,
+            font=(font_family, 15, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            body,
+            text="请使用绑定东北大学统一身份认证的微信完成授权",
+            bg=bg,
+            fg=muted,
+            font=(font_family, 9),
+        ).pack(anchor="w", pady=(4, 11))
+
+        qr_card = tk.Frame(body, bg=white, highlightbackground="#D9E2E8", highlightthickness=1)
+        qr_card.pack(fill="x")
         image = qr.make_image(fill_color="black", back_color="white")
+        image = image.get_image() if hasattr(image, "get_image") else image
+        image = image.resize((280, 280), Image.Resampling.NEAREST)
         photo = ImageTk.PhotoImage(image)
+        image_label = tk.Label(qr_card, image=photo, bg=white)
+        image_label.image = photo
+        image_label.pack(padx=14, pady=14)
+
+        steps = tk.Frame(body, bg=bg)
+        steps.pack(fill="x", pady=(13, 8))
+        for number, text in (("1", "打开微信"), ("2", "完成授权"), ("3", "点击确认")):
+            step = tk.Frame(steps, bg=bg)
+            step.pack(side="left", expand=True)
+            tk.Label(
+                step,
+                text=number,
+                bg=teal,
+                fg=white,
+                font=(font_family, 9, "bold"),
+                width=2,
+                height=1,
+            ).pack()
+            tk.Label(
+                step,
+                text=text,
+                bg=bg,
+                fg=muted,
+                font=(font_family, 9),
+            ).pack(pady=(5, 0))
+
+        status = tk.Label(
+            body,
+            text="等待微信授权...",
+            bg=bg,
+            fg=teal,
+            font=(font_family, 9),
+        )
+        status.pack(pady=(0, 7))
         confirmed = False
 
         def confirm_login():
             nonlocal confirmed
             confirmed = True
-            root.destroy()
+            status.config(text="已确认，正在检查登录状态...", fg=teal)
+            confirm_button.config(state="disabled")
+            root.after(120, root.destroy)
 
         def cancel_login():
             root.destroy()
 
-        tk.Label(root, text="请使用绑定东北大学统一身份认证的微信扫码").pack(padx=18, pady=(16, 4))
-        image_label = tk.Label(root, image=photo)
-        image_label.image = photo
-        image_label.pack(padx=18, pady=8)
-        tk.Label(root, text="微信完成授权后，点击下方按钮继续").pack(pady=(0, 8))
-        tk.Button(root, text="我已完成授权，继续", command=confirm_login, width=24).pack(pady=(0, 16))
+        confirm_button = tk.Button(
+            body,
+            text="我已完成授权，继续",
+            command=confirm_login,
+            bg=teal,
+            activebackground="#006B71",
+            fg=white,
+            activeforeground=white,
+            disabledforeground="#A6B3BD",
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            cursor="hand2",
+            font=(font_family, 10, "bold"),
+            padx=18,
+            pady=9,
+        )
+        confirm_button.pack(fill="x")
+        tk.Label(
+            body,
+            text="Enter 确认登录   ·   Esc 取消",
+            bg=bg,
+            fg="#8A9BA8",
+            font=(font_family, 8),
+        ).pack(pady=(6, 0))
         root.protocol("WM_DELETE_WINDOW", cancel_login)
+        root.bind("<Return>", lambda _event: confirm_login())
+        root.bind("<Escape>", lambda _event: cancel_login())
+        root.after(400, lambda: root.attributes("-topmost", False))
         root.mainloop()
         return confirmed
     except Exception as exc:
@@ -905,8 +1016,7 @@ def main():
         print("4.核对普通课和实验课预览，导出为WakeUP课程表CSV文件")
         print(colorama.Fore.YELLOW + "===========警告=============")
         print(colorama.Fore.YELLOW + "本工具仅提供辅助作用，如果生成的课程表与系统中显示的不一致，请时刻以教务系统中显示的为准！")
-        print(colorama.Fore.YELLOW + "本项目仓库：https://github.com/2711944586/neuwakeup")
-        print(colorama.Fore.YELLOW + "请尽量从本项目仓库获取最新版本，以免出现问题。")
+        print(colorama.Fore.YELLOW + "请从可信的项目发布渠道获取最新版本，以免出现问题。")
         print("===========================")
         input("请仔细阅读上述内容后，按回车键继续...")
 
