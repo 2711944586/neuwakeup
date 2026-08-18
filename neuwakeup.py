@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 
-PROJECT_VERSION = "1.3.0"
+PROJECT_VERSION = "1.3.1"
 MINIMUM_PYTHON = (3, 9)
 REQUIRED_DEPENDENCIES = (
     ("requests", "requests", "2.32.4"),
@@ -35,6 +35,19 @@ def configure_frozen_io():
     for stream_name in ("stdout", "stderr"):
         if getattr(sys, stream_name, None) is None:
             setattr(sys, stream_name, open(os.devnull, "w", encoding="utf-8"))
+
+
+def enable_windows_dpi_awareness():
+    """Opt into crisp per-monitor rendering before a Tk window is created."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        if not ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except (AttributeError, OSError):
+        return
 
 
 def dependency_problems():
@@ -282,6 +295,7 @@ def show_runtime_message(title, message, error=False):
     if not is_frozen():
         return
     try:
+        enable_windows_dpi_awareness()
         import tkinter as tk
         from tkinter import messagebox
 
@@ -304,7 +318,9 @@ def show_qr_confirmation(qr_url):
 
     root = None
     try:
+        enable_windows_dpi_awareness()
         import tkinter as tk
+        import tkinter.font as tkfont
         from PIL import Image, ImageDraw, ImageTk
 
         root = tk.Tk()
@@ -312,14 +328,23 @@ def show_qr_confirmation(qr_url):
         root.resizable(False, False)
         root.configure(bg="#F6F7F9")
         root.attributes("-topmost", True)
-        window_width, window_height = 560, 680
+        design_width, design_height = 560, 680
+        ui_scale = max(root.winfo_fpixels("1i") / 96.0, 1.0)
+        window_width = round(design_width * ui_scale)
+        window_height = round(design_height * ui_scale)
+
+        def px(value):
+            return round(value * ui_scale)
+
         root.geometry(f"{window_width}x{window_height}")
         root.update_idletasks()
         left = max((root.winfo_screenwidth() - window_width) // 2, 0)
         top = max((root.winfo_screenheight() - window_height) // 2, 0)
         root.geometry(f"{window_width}x{window_height}+{left}+{top}")
 
-        font_family = "Microsoft YaHei UI"
+        families = set(tkfont.families(root))
+        brand_font = next((name for name in ("Segoe UI Variable Display", "Segoe UI") if name in families), "Segoe UI")
+        ui_font = next((name for name in ("MiSans", "Microsoft YaHei UI", "微软雅黑") if name in families), "Microsoft YaHei UI")
         bg = "#F6F7F9"
         ink = "#18232D"
         muted = "#687681"
@@ -332,9 +357,9 @@ def show_qr_confirmation(qr_url):
         canvas.pack()
 
         def render_surface(button_fill=accent):
-            """Render the static surface at 4x, then downsample for clean edges."""
-            scale = 4
-            artwork = Image.new("RGB", (window_width * scale, window_height * scale), bg)
+            """Render at twice the output resolution, then downsample for clean edges."""
+            scale = 2 * ui_scale
+            artwork = Image.new("RGB", (round(design_width * scale), round(design_height * scale)), bg)
             draw = ImageDraw.Draw(artwork)
 
             def box(x1, y1, x2, y2):
@@ -349,7 +374,7 @@ def show_qr_confirmation(qr_url):
                     width=max(1, int(width * scale)) if outline else 1,
                 )
 
-            draw.line((40 * scale, 80 * scale, 520 * scale, 80 * scale), fill=border, width=scale)
+            draw.line(box(40, 80, 520, 80), fill=border, width=max(1, round(scale)))
             rounded(130, 178, 430, 478, 10, white, border)
             rounded(100, 548, 460, 596, 6, button_fill)
             return ImageTk.PhotoImage(artwork.resize((window_width, window_height), Image.Resampling.LANCZOS))
@@ -357,21 +382,21 @@ def show_qr_confirmation(qr_url):
         background_photo = render_surface()
         background_item = canvas.create_image(0, 0, anchor="nw", image=background_photo)
         canvas.background_photo = background_photo
-        canvas.create_rectangle(40, 32, 44, 52, fill=accent, outline="")
-        canvas.create_text(56, 42, text="NEU WakeUP", anchor="w", fill=ink, font=(font_family, 18, "bold"))
-        canvas.create_text(520, 42, text="安全登录", anchor="e", fill=muted, font=(font_family, 10))
-        canvas.create_text(280, 114, text="微信扫码授权", fill=ink, font=(font_family, 20, "bold"))
-        canvas.create_text(280, 143, text="授权完成后点击继续", fill=muted, font=(font_family, 10))
+        canvas.create_rectangle(px(40), px(32), px(44), px(52), fill=accent, outline="")
+        canvas.create_text(px(56), px(42), text="NEU WakeUP", anchor="w", fill=ink, font=(brand_font, 18, "bold"))
+        canvas.create_text(px(520), px(42), text="安全登录", anchor="e", fill=muted, font=(ui_font, 10))
+        canvas.create_text(px(280), px(114), text="微信扫码授权", fill=ink, font=(ui_font, 20, "bold"))
+        canvas.create_text(px(280), px(143), text="授权完成后点击继续", fill=muted, font=(ui_font, 10))
 
         image = qr.make_image(fill_color="black", back_color="white")
         image = image.get_image() if hasattr(image, "get_image") else image
-        image = image.resize((248, 248), Image.Resampling.NEAREST)
+        image = image.resize((px(248), px(248)), Image.Resampling.NEAREST)
         photo = ImageTk.PhotoImage(image)
-        canvas.create_image(280, 328, image=photo)
+        canvas.create_image(px(280), px(328), image=photo)
         canvas.qr_photo = photo
 
-        status_dot = canvas.create_oval(140, 508, 148, 516, fill=accent, outline="")
-        status_text = canvas.create_text(160, 512, text="等待微信授权", anchor="w", fill=accent_dark, font=(font_family, 10))
+        status_dot = canvas.create_oval(px(140), px(508), px(148), px(516), fill=accent, outline="")
+        status_text = canvas.create_text(px(160), px(512), text="等待微信授权", anchor="w", fill=accent_dark, font=(ui_font, 10))
         confirmed = False
         button_enabled = True
         button_hover = False
@@ -400,11 +425,11 @@ def show_qr_confirmation(qr_url):
         def cancel_login():
             root.destroy()
 
-        button_label = canvas.create_text(280, 572, text="继续", fill=white, font=(font_family, 11, "bold"))
+        button_label = canvas.create_text(px(280), px(572), text="继续", fill=white, font=(ui_font, 11, "bold"))
 
         def update_button_hover(event):
             nonlocal button_hover
-            inside = 100 <= event.x <= 460 and 548 <= event.y <= 596
+            inside = px(100) <= event.x <= px(460) and px(548) <= event.y <= px(596)
             if not button_enabled or inside == button_hover:
                 return
             button_hover = inside
@@ -412,7 +437,7 @@ def show_qr_confirmation(qr_url):
 
         canvas.bind("<Motion>", update_button_hover)
         canvas.bind("<Leave>", lambda _event: refresh_surface(accent) if button_enabled else None)
-        canvas.bind("<Button-1>", lambda event: confirm_login() if 100 <= event.x <= 460 and 548 <= event.y <= 596 else None)
+        canvas.bind("<Button-1>", lambda event: confirm_login() if px(100) <= event.x <= px(460) and px(548) <= event.y <= px(596) else None)
         root.protocol("WM_DELETE_WINDOW", cancel_login)
         root.bind("<Return>", lambda _event: confirm_login())
         root.bind("<Escape>", lambda _event: cancel_login())

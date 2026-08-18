@@ -54,26 +54,6 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 脚本使用独立的 `.build-venv`，生成无控制台的 `dist\NEU-WakeUP.exe`。构建缓存会被忽略，发布 EXE 会保留并提交到仓库。
 
-## Android APK 可行性
-
-目标流程在技术上可行，但当前仓库没有伪造的 APK。要实现“手机内直接唤起微信授权、生成 CSV、交给 WakeUP 导入”，必须先具备以下外部条件：
-
-- 微信开放平台 AppID、已审核的 Android 包名和签名指纹。
-- HTTPS 授权回调服务，以及由服务端保管的微信 AppSecret。
-- 学校 CAS/企业微信允许将微信授权结果交换为教务系统登录态的接口或合作配置。
-- Android 端的 CSV 分享权限和 WakeUP 导入 Intent。
-
-可靠的生产流程应为：
-
-```text
-Android APK → 微信 SDK 授权 → HTTPS 后端回调 → 短期教务会话
-           → 获取并校验课表 → 生成 CSV → FileProvider/ACTION_VIEW → WakeUP
-```
-
-当前二维码地址属于网页扫码登录流程，普通 APK 直接打开该 URL 不能自动获得同一 CAS 会话，也不能安全绕过微信授权。AppSecret、Cookie 和会话令牌不能写入 APK。拿到上述授权资料后，应使用 Kotlin/Android SDK 实现移动端登录和网络层，并复用本项目的 CSV 字段与完整性规则。
-
-WakeUP 官方 CSV 教程支持通过“用其他应用打开”选择 WakeUP 导入。Android 端可使用 `FileProvider` 分享 `text/csv`，优先尝试 WakeUP 包名 `com.suda.yzune.wakeupschedule`，失败时回退系统选择器；最终是否直接打开仍以用户设备上安装的 WakeUP 版本为准。
-
 ## 项目文件
 
 ```text
@@ -82,6 +62,6 @@ neuwakeup/
 ├── requirements.txt      # 源码依赖
 ├── build_exe.ps1         # Windows 无控制台 EXE 构建脚本
 ├── dist\NEU-WakeUP.exe   # 可直接运行的 Windows 发布包
-├── README.md             # 使用与移动端方案说明
+├── README.md             # 使用与构建说明
 └── .gitignore            # 构建缓存和个人 CSV 忽略规则
 ```
