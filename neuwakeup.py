@@ -305,14 +305,14 @@ def show_qr_confirmation(qr_url):
     root = None
     try:
         import tkinter as tk
-        from PIL import Image, ImageTk
+        from PIL import Image, ImageDraw, ImageTk
 
         root = tk.Tk()
         root.title("NEU WakeUP | 安全登录")
         root.resizable(False, False)
-        root.configure(bg="#EEF1F4")
+        root.configure(bg="#F6F7F9")
         root.attributes("-topmost", True)
-        window_width, window_height = 620, 760
+        window_width, window_height = 560, 680
         root.geometry(f"{window_width}x{window_height}")
         root.update_idletasks()
         left = max((root.winfo_screenwidth() - window_width) // 2, 0)
@@ -320,78 +320,70 @@ def show_qr_confirmation(qr_url):
         root.geometry(f"{window_width}x{window_height}+{left}+{top}")
 
         font_family = "Microsoft YaHei UI"
-        bg = "#EEF1F4"
-        ink = "#1D2B35"
-        charcoal = "#202C36"
-        muted = "#72808A"
-        coral = "#D66A4C"
-        coral_hover = "#BC5239"
-        coral_dark = "#A94A36"
+        bg = "#F6F7F9"
+        ink = "#18232D"
+        muted = "#687681"
+        border = "#D9E0E7"
+        accent = "#2F65D9"
+        accent_hover = "#2453BC"
+        accent_dark = "#2A5BC4"
         white = "#FFFFFF"
         canvas = tk.Canvas(root, width=window_width, height=window_height, bg=bg, highlightthickness=0)
         canvas.pack()
 
-        def rounded_rect(x1, y1, x2, y2, radius, fill):
-            radius = min(radius, (x2 - x1) / 2, (y2 - y1) / 2)
-            items = [
-                canvas.create_rectangle(x1 + radius, y1, x2 - radius, y2, fill=fill, outline=""),
-                canvas.create_rectangle(x1, y1 + radius, x2, y2 - radius, fill=fill, outline=""),
-            ]
-            for left, top, start in (
-                (x1, y1, 90),
-                (x2 - 2 * radius, y1, 0),
-                (x1, y2 - 2 * radius, 180),
-                (x2 - 2 * radius, y2 - 2 * radius, 270),
-            ):
-                items.append(canvas.create_arc(
-                    left,
-                    top,
-                    left + 2 * radius,
-                    top + 2 * radius,
-                    start=start,
-                    extent=90,
+        def render_surface(button_fill=accent):
+            """Render the static surface at 4x, then downsample for clean edges."""
+            scale = 4
+            artwork = Image.new("RGB", (window_width * scale, window_height * scale), bg)
+            draw = ImageDraw.Draw(artwork)
+
+            def box(x1, y1, x2, y2):
+                return tuple(int(value * scale) for value in (x1, y1, x2, y2))
+
+            def rounded(x1, y1, x2, y2, radius, fill, outline=None, width=1):
+                draw.rounded_rectangle(
+                    box(x1, y1, x2, y2),
+                    radius=int(radius * scale),
                     fill=fill,
-                    outline="",
-                ))
-            return tuple(items)
+                    outline=outline,
+                    width=max(1, int(width * scale)) if outline else 1,
+                )
 
-        # A large single surface gives the QR code room to breathe.
-        rounded_rect(28, 26, 592, 748, 28, "#D9E0E5")
-        rounded_rect(24, 20, 588, 742, 28, white)
-        rounded_rect(24, 20, 588, 174, 28, charcoal)
-        canvas.create_rectangle(24, 52, 588, 174, fill=charcoal, outline="")
-        canvas.create_text(58, 78, text="NEU WakeUP", anchor="w", fill=white, font=(font_family, 25, "bold"))
-        rounded_rect(456, 62, 554, 98, 16, "#344A58")
-        canvas.create_text(505, 80, text="安全登录", fill="#E6EEF1", font=(font_family, 10, "bold"))
+            draw.line((40 * scale, 80 * scale, 520 * scale, 80 * scale), fill=border, width=scale)
+            rounded(130, 178, 430, 478, 10, white, border)
+            rounded(100, 548, 460, 596, 6, button_fill)
+            return ImageTk.PhotoImage(artwork.resize((window_width, window_height), Image.Resampling.LANCZOS))
 
-        canvas.create_text(58, 216, text="微信扫码授权", anchor="w", fill=ink, font=(font_family, 19, "bold"))
-        canvas.create_text(
-            58,
-            246,
-            text="授权完成后点击继续",
-            anchor="w",
-            fill=muted,
-            font=(font_family, 11),
-        )
+        background_photo = render_surface()
+        background_item = canvas.create_image(0, 0, anchor="nw", image=background_photo)
+        canvas.background_photo = background_photo
+        canvas.create_rectangle(40, 32, 44, 52, fill=accent, outline="")
+        canvas.create_text(56, 42, text="NEU WakeUP", anchor="w", fill=ink, font=(font_family, 18, "bold"))
+        canvas.create_text(520, 42, text="安全登录", anchor="e", fill=muted, font=(font_family, 10))
+        canvas.create_text(280, 114, text="微信扫码授权", fill=ink, font=(font_family, 20, "bold"))
+        canvas.create_text(280, 143, text="授权完成后点击继续", fill=muted, font=(font_family, 10))
 
-        rounded_rect(148, 272, 464, 596, 24, "#F3F6F8")
-        rounded_rect(162, 286, 450, 582, 16, white)
         image = qr.make_image(fill_color="black", back_color="white")
         image = image.get_image() if hasattr(image, "get_image") else image
-        image = image.resize((280, 280), Image.Resampling.NEAREST)
+        image = image.resize((248, 248), Image.Resampling.NEAREST)
         photo = ImageTk.PhotoImage(image)
-        canvas.create_image(306, 434, image=photo)
+        canvas.create_image(280, 328, image=photo)
         canvas.qr_photo = photo
 
-        rounded_rect(58, 620, 562, 658, 18, "#FFF1EC")
-        status_text = canvas.create_text(310, 639, text="等待微信授权", fill=coral_dark, font=(font_family, 11, "bold"))
+        status_dot = canvas.create_oval(140, 508, 148, 516, fill=accent, outline="")
+        status_text = canvas.create_text(160, 512, text="等待微信授权", anchor="w", fill=accent_dark, font=(font_family, 10))
         confirmed = False
         button_enabled = True
-        button_items = ()
+        button_hover = False
         button_label = None
 
-        def set_status(message, color=coral_dark):
+        def set_status(message, color=accent_dark):
             canvas.itemconfigure(status_text, text=message, fill=color)
+
+        def refresh_surface(button_fill):
+            photo = render_surface(button_fill)
+            canvas.background_photo = photo
+            canvas.itemconfigure(background_item, image=photo)
 
         def confirm_login():
             nonlocal confirmed, button_enabled
@@ -400,26 +392,27 @@ def show_qr_confirmation(qr_url):
             confirmed = True
             button_enabled = False
             set_status("已确认，正在检查登录状态...")
-            for item in button_items:
-                canvas.itemconfigure(item, fill="#C7B4AE")
-            canvas.itemconfigure(button_label, fill="#F8EDE9")
+            refresh_surface("#B8C6E6")
+            canvas.itemconfigure(status_dot, fill="#8DA4D7")
+            canvas.itemconfigure(button_label, fill="#F4F6FC")
             root.after(120, root.destroy)
 
         def cancel_login():
             root.destroy()
 
-        button_items = rounded_rect(58, 680, 562, 728, 20, coral)
-        button_label = canvas.create_text(310, 704, text="继续", fill=white, font=(font_family, 12, "bold"))
+        button_label = canvas.create_text(280, 572, text="继续", fill=white, font=(font_family, 11, "bold"))
 
-        def set_button_fill(fill):
-            if button_enabled:
-                for item in button_items:
-                    canvas.itemconfigure(item, fill=fill)
+        def update_button_hover(event):
+            nonlocal button_hover
+            inside = 100 <= event.x <= 460 and 548 <= event.y <= 596
+            if not button_enabled or inside == button_hover:
+                return
+            button_hover = inside
+            refresh_surface(accent_hover if inside else accent)
 
-        for item in button_items + (button_label,):
-            canvas.tag_bind(item, "<Button-1>", lambda _event: confirm_login())
-            canvas.tag_bind(item, "<Enter>", lambda _event: set_button_fill(coral_hover))
-            canvas.tag_bind(item, "<Leave>", lambda _event: set_button_fill(coral))
+        canvas.bind("<Motion>", update_button_hover)
+        canvas.bind("<Leave>", lambda _event: refresh_surface(accent) if button_enabled else None)
+        canvas.bind("<Button-1>", lambda event: confirm_login() if 100 <= event.x <= 460 and 548 <= event.y <= 596 else None)
         root.protocol("WM_DELETE_WINDOW", cancel_login)
         root.bind("<Return>", lambda _event: confirm_login())
         root.bind("<Escape>", lambda _event: cancel_login())
