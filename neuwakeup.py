@@ -1,7 +1,95 @@
-import csv
-import random
+import importlib
+import importlib.metadata
+import importlib.util
 import re
+import subprocess
 import sys
+
+
+PROJECT_VERSION = "1.1.0"
+REQUIRED_DEPENDENCIES = (
+    ("requests", "requests", "2.32.4"),
+    ("qrcode", "qrcode", "8.2"),
+    ("prettytable", "prettytable", "3.10.0"),
+    ("colorama", "colorama", "0.4.6"),
+    ("pycryptodome", "Crypto", "3.20.0"),
+)
+
+
+def version_numbers(value):
+    numbers = [int(number) for number in re.findall(r"\d+", value)]
+    return tuple((numbers + [0, 0, 0])[:3])
+
+
+def dependency_problems():
+    problems = []
+    for package_name, module_name, minimum_version in REQUIRED_DEPENDENCIES:
+        try:
+            installed_version = importlib.metadata.version(package_name)
+        except importlib.metadata.PackageNotFoundError:
+            problems.append(f"{package_name}>={minimum_version}")
+            continue
+        if importlib.util.find_spec(module_name) is None or version_numbers(installed_version) < version_numbers(minimum_version):
+            problems.append(f"{package_name}>={minimum_version}")
+            continue
+        try:
+            importlib.import_module(module_name)
+        except Exception:
+            sys.modules.pop(module_name, None)
+            problems.append(f"{package_name}>={minimum_version}")
+    return problems
+
+
+def ensure_dependencies():
+    problems = dependency_problems()
+    if not problems:
+        print("依赖环境检查通过。")
+        return
+
+    print("检测到缺失或版本过低的依赖，正在自动安装/更新：")
+    print("  " + " ".join(problems))
+    pip_check = subprocess.run(
+        [sys.executable, "-m", "pip", "--version"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if pip_check.returncode != 0:
+        subprocess.run([sys.executable, "-m", "ensurepip", "--upgrade"], check=True)
+
+    command = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        "--disable-pip-version-check",
+        *problems,
+    ]
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(
+            "依赖自动安装失败。请检查网络和Python写入权限，然后执行：\n"
+            f"{sys.executable} -m pip install -r requirements.txt"
+        ) from exc
+
+    importlib.invalidate_caches()
+    remaining = dependency_problems()
+    if remaining:
+        raise SystemExit("依赖安装后仍不可用：" + "、".join(remaining))
+    print("依赖安装/更新完成。")
+
+
+if __name__ == "__main__":
+    ensure_dependencies()
+
+
+import argparse
+import csv
+import os
+import random
+import tempfile
 import traceback
 import uuid
 from pathlib import Path
@@ -115,8 +203,22 @@ def set_webvpn(url):
     )
 
 
-def neucas_qr_login():
-    print(colorama.Fore.YELLOW + "\n请使用微信扫码登录")
+def get_current_user():
+    response_json = request_json(
+        "GET",
+        set_webvpn("https://jwxt.neu.edu.cn/jwapp/sys/homeapp/api/home/currentUser.do"),
+    )
+    try:
+        username = response_json["datas"]["userName"]
+        userid = response_json["datas"]["userId"]
+    except (KeyError, TypeError) as exc:
+        raise RuntimeError("当前用户接口返回格式错误") from exc
+    if not username or userid in (None, ""):
+        raise RuntimeError("登录状态无效")
+    return username, userid
+
+
+def perform_qr_login_attempt():
     u_uuid = str(uuid.uuid4())
     u_qrurl = f"https://pass.neu.edu.cn/tpass/qyQrLogin?uuid={u_uuid}"
     u_checkurl = f"https://pass.neu.edu.cn/tpass/checkQRCodeScan?random={random.random():.16f}&uuid={u_uuid}"
@@ -147,16 +249,22 @@ def neucas_qr_login():
         checked_request("GET", "https://webvpn.neu.edu.cn/http/62304135386136393339346365373340baf6bc2bc4cb43c8bc1d6f66c806db/jwapp/sys/homeapp/index.do")
 
 
-def print_welcome():
-    response_json = request_json(
-        "GET",
-        set_webvpn("https://jwxt.neu.edu.cn/jwapp/sys/homeapp/api/home/currentUser.do"),
-    )
-    try:
-        username = response_json["datas"]["userName"]
-        userid = response_json["datas"]["userId"]
-    except (KeyError, TypeError) as exc:
-        raise RuntimeError("当前用户接口返回格式错误") from exc
+def neucas_qr_login(max_attempts=3):
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        print(colorama.Fore.YELLOW + f"\n请使用微信扫码登录（第 {attempt}/{max_attempts} 次）")
+        perform_qr_login_attempt()
+        try:
+            return get_current_user()
+        except Exception as exc:
+            last_error = exc
+            if attempt < max_attempts:
+                print(colorama.Fore.YELLOW + "尚未检测到有效登录，二维码可能已过期，将重新生成。")
+    raise RuntimeError("扫码登录验证失败，请确认微信授权后重试") from last_error
+
+
+def print_welcome(user=None):
+    username, userid = user or get_current_user()
     print(f"\n欢迎您，{username} ({userid})！")
     return username
 
@@ -167,14 +275,25 @@ def term_name_for_code(termcode):
     return f"{start_year}-{end_year}年{semester_name}"
 
 
-def get_termcode():
+def is_valid_termcode(termcode):
+    match = re.fullmatch(r"(\d{4})-(\d{4})-([123])", termcode)
+    return match is not None and int(match.group(1)) + 1 == int(match.group(2))
+
+
+def get_termcode(term_override=None):
+    if term_override is not None:
+        if not is_valid_termcode(term_override):
+            raise ValueError(f"学期代码格式错误：{term_override}")
+        termname = term_name_for_code(term_override)
+        print(f"指定学期为：{termname} ({term_override})")
+        return term_override, termname
+
     termcode = DEFAULT_TERMCODE
     termname = DEFAULT_TERMNAME
     print(f"默认学期为：{termname} ({termcode})")
     inputtermcode = input("如需更改学期请输入学期代码 (格式如2026-2027-1), 否则直接回车：").strip()
     if inputtermcode:
-        match = re.fullmatch(r"(\d{4})-(\d{4})-([123])", inputtermcode)
-        if match is None or int(match.group(1)) + 1 != int(match.group(2)):
+        if not is_valid_termcode(inputtermcode):
             print(colorama.Fore.RED + "学期代码格式错误，使用默认学期")
         else:
             termcode = inputtermcode
@@ -299,6 +418,26 @@ def get_campuscodes(term):
     return codes
 
 
+def unarranged_course_names(schedule_list, campuscode):
+    unarranged = schedule_list.get("notArrangeList", [])
+    if unarranged is None:
+        return []
+    if not isinstance(unarranged, list):
+        raise RuntimeError(f"校区 {campuscode} 的未排课列表格式错误")
+
+    names = []
+    for item in unarranged:
+        if isinstance(item, str):
+            name = item.strip()
+        elif isinstance(item, dict):
+            name = str(item.get("courseName") or item.get("name") or "").strip()
+        else:
+            name = ""
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
 def parse_arranged_campus(term, campuscode, headers):
     schedule_json = request_json(
         "POST",
@@ -339,7 +478,7 @@ def parse_arranged_campus(term, campuscode, headers):
                 place_name,
                 week,
             ]))
-    return rows
+    return rows, unarranged_course_names(schedule_list, campuscode)
 
 
 def convert_arranged_by_WoDeKeBiao(term):
@@ -350,9 +489,14 @@ def convert_arranged_by_WoDeKeBiao(term):
         "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
     }
     rows = []
+    unarranged = []
     for campuscode in get_campuscodes(term):
-        rows.extend(parse_arranged_campus(term, campuscode, headers))
-    return deduplicate_rows(rows)
+        campus_rows, campus_unarranged = parse_arranged_campus(term, campuscode, headers)
+        rows.extend(campus_rows)
+        for course_name in campus_unarranged:
+            if course_name not in unarranged:
+                unarranged.append(course_name)
+    return deduplicate_rows(rows), unarranged
 
 
 def convert_arranged_by_WoDeKeCheng(term):
@@ -502,7 +646,7 @@ def get_complete_schedule(term):
         primary_error = exc
 
     try:
-        arranged_rows = convert_arranged_by_WoDeKeBiao(term)
+        arranged_rows, unarranged_courses = convert_arranged_by_WoDeKeBiao(term)
     except Exception as exc:
         raise RuntimeError(
             "完整课表接口获取失败。为避免遗漏实验课，本次不会导出不完整CSV。"
@@ -511,7 +655,109 @@ def get_complete_schedule(term):
     rows = merge_course_rows(primary_rows, arranged_rows)
     if not rows:
         raise RuntimeError("教务系统没有返回任何已排课程，请确认学期是否已经开放排课。")
-    return rows, primary_error
+    arranged_names = {row[0] for row in rows}
+    unarranged_courses = [name for name in unarranged_courses if name not in arranged_names]
+    return rows, primary_error, unarranged_courses
+
+
+def schedule_conflicts(rows):
+    occupied = {}
+    conflicts = []
+    for row in rows:
+        weeks = week_number_key(row[6])
+        if not weeks or not all(isinstance(week, int) for week in weeks):
+            continue
+        for week in weeks:
+            for section in range(row[2], row[3] + 1):
+                key = (week, row[1], section)
+                previous = occupied.get(key)
+                if previous is None:
+                    occupied[key] = row[0]
+                elif previous != row[0]:
+                    description = f"第{week}周 星期{row[1]} 第{section}节：{previous} / {row[0]}"
+                    if description not in conflicts:
+                        conflicts.append(description)
+    return conflicts
+
+
+def print_completeness_summary(rows, unarranged_courses):
+    experiment_count = sum(
+        re.match(r"^[\[【](?:实|实验|实践|上机)[\]】]", row[0]) is not None
+        for row in rows
+    )
+    print("==========完整性检查==========")
+    print(f"已排课程记录：{len(rows)} 条")
+    print(f"其中实验/实践课程：{experiment_count} 条")
+    print(f"未排星期或节次的课程：{len(unarranged_courses)} 门")
+    if unarranged_courses:
+        print(colorama.Fore.YELLOW + "以下课程因教务系统尚未安排星期/节次，无法写入WakeUP CSV：")
+        for course_name in unarranged_courses:
+            print(colorama.Fore.YELLOW + f"  - {course_name}")
+
+    conflicts = schedule_conflicts(rows)
+    print(f"检测到的时间冲突：{len(conflicts)} 处")
+    for conflict in conflicts:
+        print(colorama.Fore.YELLOW + f"  - {conflict}")
+    print("============================")
+
+
+def write_schedule_csv(rows, output_path):
+    validated_rows = [validate_course_row(list(row)) for row in rows]
+    output_path = Path(output_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output_path.stem}-",
+        suffix=".tmp",
+        dir=output_path.parent,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", newline="", encoding="utf-8-sig") as output_file:
+            writer = csv.writer(output_file)
+            writer.writerow(CSV_HEADER)
+            writer.writerows(validated_rows)
+
+        with temporary_path.open("r", newline="", encoding="utf-8-sig") as check_file:
+            written_rows = list(csv.reader(check_file))
+        if not written_rows or written_rows[0] != CSV_HEADER:
+            raise RuntimeError("CSV表头校验失败")
+        if len(written_rows) - 1 != len(validated_rows) or any(len(row) != 7 for row in written_rows[1:]):
+            raise RuntimeError("CSV记录数量或列数校验失败")
+        os.replace(temporary_path, output_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return output_path
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="东北大学课表导出为WakeUP CSV")
+    parser.add_argument("--term", help="指定学期代码，例如 2026-2027-1")
+    parser.add_argument("--output", type=Path, help="指定CSV输出路径，默认写入脚本目录的schedule.csv")
+    parser.add_argument("--self-check", action="store_true", help="运行内置解析和CSV检查，不访问教务系统")
+    parser.add_argument("--version", action="version", version=f"NEU WakeUP {PROJECT_VERSION}")
+    arguments = parser.parse_args()
+    if arguments.term is not None and not is_valid_termcode(arguments.term):
+        parser.error("--term 格式应为连续学年的学期代码，例如 2026-2027-1")
+    return arguments
+
+
+def run_self_check():
+    title_detail = [
+        "[实]商务数据分析与应用-商务数据采集",
+        "13周 袁媛 浑南校区 信息化管理实验室(文管学馆B208) 信息2402(29),信息2401(28)",
+    ]
+    course_name = arranged_course_name("商务数据分析与应用", title_detail)
+    detail = parse_arranged_detail(title_detail[1], "袁媛")
+    expected_detail = ("13周", "信息化管理实验室(文管学馆B208)", "袁媛")
+    if course_name != title_detail[0] or detail != expected_detail:
+        raise RuntimeError("实验课解析自检失败")
+
+    row = validate_course_row([course_name, 3, 5, 8, detail[2], detail[1], detail[0]])
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        output_path = write_schedule_csv([row], Path(temporary_directory) / "schedule.csv")
+        if not output_path.is_file():
+            raise RuntimeError("CSV写入自检失败")
+    print("内置自检通过：实验课解析、七列格式和原子写入均正常。")
 
 
 def prettytable_print(list_for_csv):
@@ -522,57 +768,66 @@ def prettytable_print(list_for_csv):
     print(table)
 
 
+def main():
+    arguments = parse_arguments()
+    if arguments.self_check:
+        run_self_check()
+        return 0
+
+    check_network()
+    print("==========使用教程==========")
+    print("1.打开程序，仔细阅读并理解本使用教程，而后按回车键继续")
+    print("2.使用绑定了东北大学微信企业号的微信扫描程序显示的二维码 (或使用微信打开给出的链接)")
+    print("3.扫描二维码，在微信点击授权登录后，在程序中按下回车键，等待运行结束")
+    print("4.核对普通课和实验课预览，导出为WakeUP课程表CSV文件")
+    print(colorama.Fore.YELLOW + "===========警告=============")
+    print(colorama.Fore.YELLOW + "本工具仅提供辅助作用，如果生成的课程表与系统中显示的不一致，请时刻以教务系统中显示的为准！")
+    print(colorama.Fore.YELLOW + "本项目仓库：https://github.com/2711944586/neuwakeup")
+    print(colorama.Fore.YELLOW + "请尽量从本项目仓库获取最新版本，以免出现问题。")
+    print("===========================")
+    input("请仔细阅读上述内容后，按回车键继续...")
+
+    user = neucas_qr_login()
+    print_welcome(user)
+    termcode, termname = get_termcode(arguments.term)
+    print(f"获取{termname} ({termcode}) 课程表中...")
+    try:
+        list_for_csv, primary_error, unarranged_courses = get_complete_schedule(termcode)
+    except Exception as schedule_error:
+        print(colorama.Fore.RED + "完整课程表获取失败")
+        print(colorama.Fore.RED + "错误信息：" + str(schedule_error))
+        input("为避免导出遗漏课程，本次不生成CSV。按回车键退出程序...")
+        return 1
+    if primary_error is not None:
+        print(colorama.Fore.YELLOW + "“我的课程”接口不可用，已使用完整课表接口生成课程。")
+        print(colorama.Fore.LIGHTBLACK_EX + "接口信息：" + str(primary_error))
+
+    print_completeness_summary(list_for_csv, unarranged_courses)
+    while True:
+        print("==========获取结束==========")
+        print("以下是获取到的课程表预览：")
+        prettytable_print(list_for_csv)
+        print("导出方式：")
+        print("1. 导出至csv文件 (导出至WakeUP课程表)")
+        choice = "1" if arguments.output is not None else input("请选择导出方式(输入数字1): ").strip()
+        if choice == "1":
+            output_path = arguments.output or (Path(__file__).resolve().parent / "schedule.csv")
+            output_path = write_schedule_csv(list_for_csv, output_path)
+            print(colorama.Fore.GREEN + f"课程表已成功导出至{output_path}，请使用WakeUP课程表导入该文件。")
+            print("   如何导入? https://wakeup.fun/doc/import_from_csv.html")
+            print(colorama.Fore.YELLOW + "提示：导入后请与教务系统中的课程表进行比对。如存在区别，请以教务系统显示为准！" + colorama.Style.RESET_ALL)
+            if arguments.output is not None:
+                return 0
+            input("按回车键退出程序...")
+            return 0
+        print("无效的选择。")
+        input("按回车键重试...")
+        print("\033[2J\033[H", end="")
+
+
 if __name__ == "__main__":
     try:
-        check_network()
-        print("==========使用教程==========")
-        print("1.打开程序，仔细阅读并理解本使用教程，而后按回车键继续")
-        print("2.使用绑定了东北大学微信企业号的微信扫描程序显示的二维码 (或使用微信打开给出的链接)")
-        print("3.扫描二维码，在微信点击授权登录后，在程序中按下回车键，等待运行结束")
-        print("4.核对普通课和实验课预览，导出为WakeUP课程表CSV文件")
-        print(colorama.Fore.YELLOW + "===========警告=============")
-        print(colorama.Fore.YELLOW + "本工具仅提供辅助作用，如果生成的课程表与系统中显示的不一致，请时刻以教务系统中显示的为准！")
-        print(colorama.Fore.YELLOW + "本项目仓库：https://github.com/2711944586/neuwakeup")
-        print(colorama.Fore.YELLOW + "请尽量从本项目仓库获取最新版本，以免出现问题。")
-        print("===========================")
-        input("请仔细阅读上述内容后，按回车键继续...")
-
-        neucas_qr_login()
-        print_welcome()
-        termcode, termname = get_termcode()
-        print(f"获取{termname} ({termcode}) 课程表中...")
-        try:
-            list_for_csv, primary_error = get_complete_schedule(termcode)
-        except Exception as schedule_error:
-            print(colorama.Fore.RED + "完整课程表获取失败")
-            print(colorama.Fore.RED + "错误信息：" + str(schedule_error))
-            input("为避免导出遗漏课程，本次不生成CSV。按回车键退出程序...")
-            sys.exit(1)
-        if primary_error is not None:
-            print(colorama.Fore.YELLOW + "“我的课程”接口不可用，已使用完整课表接口生成课程。")
-            print(colorama.Fore.LIGHTBLACK_EX + "接口信息：" + str(primary_error))
-
-        while True:
-            print("==========获取结束==========")
-            print("以下是获取到的课程表预览：")
-            prettytable_print(list_for_csv)
-            print("导出方式：")
-            print("1. 导出至csv文件 (导出至WakeUP课程表)")
-            choice = input("请选择导出方式(输入数字1): ").strip()
-            if choice == "1":
-                output_path = Path(__file__).resolve().parent / "schedule.csv"
-                with output_path.open("w", newline="", encoding="utf-8-sig") as output_file:
-                    writer = csv.writer(output_file)
-                    writer.writerow(CSV_HEADER)
-                    writer.writerows(list_for_csv)
-                print(colorama.Fore.GREEN + f"课程表已成功导出至{output_path}，请使用WakeUP课程表导入该文件。")
-                print("   如何导入? https://wakeup.fun/doc/import_from_csv.html")
-                print(colorama.Fore.YELLOW + "提示：导入后请与教务系统中的课程表进行比对。如存在区别，请以教务系统显示为准！" + colorama.Style.RESET_ALL)
-                input("按回车键退出程序...")
-                sys.exit(0)
-            print("无效的选择。")
-            input("按回车键重试...")
-            print("\033[2J\033[H", end="")
+        sys.exit(main())
     except Exception:
         print(colorama.Fore.RED + "程序运行出现预料之外的异常，错误信息：\n" + traceback.format_exc())
         input("按回车键退出程序...")

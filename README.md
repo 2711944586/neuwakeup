@@ -7,14 +7,17 @@
 ## 能做什么
 
 - 使用东北大学统一身份认证二维码登录，不需要在脚本中填写账号和密码。
+- 启动时检查全部 Python 依赖，缺失或版本过低时自动安装/更新。
 - 自动尝试教务系统直连；直连不可用时使用 WebVPN。
 - 同时读取“我的课程”和“我的课表”接口，避免单一接口遗漏课程。
 - 保留 `[实]` 实验子课程名称，正确提取教师、实验室、星期、节次和周次。
 - 自动删除实验课地点末尾的班级分组，例如 `信息2402(29),信息2401(28)`。
 - 过滤停课记录，合并重复记录。
+- 导出前报告已排记录、实验课、未排课课程和时间冲突。
+- 使用临时文件校验后原子替换 CSV，避免生成半截文件。
 - 输出固定七列、UTF-8 with BOM 编码的 `schedule.csv`。
 
-当前只支持导出 WakeUP CSV，不包含小爱课程表等其他导出方式。
+当前仅支持导出 WakeUP CSV。
 
 ## Windows 一键安装并运行
 
@@ -26,12 +29,10 @@
 git clone https://github.com/2711944586/neuwakeup.git
 Set-Location neuwakeup
 py -3 -m venv .venv
-& .\.venv\Scripts\python.exe -m pip install --upgrade pip
-& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 & .\.venv\Scripts\python.exe .\neuwakeup.py
 ```
 
-以上命令不需要激活虚拟环境，因此不会受到 PowerShell 执行策略限制。
+脚本首次启动时会检查 `requests`、`qrcode`、`prettytable`、`colorama` 和 `pycryptodome`，缺失或版本过低时自动调用当前 Python 的 pip 安装。以上命令不需要激活虚拟环境，因此不会受到 PowerShell 执行策略限制。
 
 以后再次使用时，进入项目目录执行一行命令即可：
 
@@ -43,7 +44,6 @@ py -3 -m venv .venv
 
 ```powershell
 git pull
-& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 & .\.venv\Scripts\python.exe .\neuwakeup.py
 ```
 
@@ -55,8 +55,6 @@ git pull
 git clone https://github.com/2711944586/neuwakeup.git
 cd neuwakeup
 python3 -m venv .venv
-./.venv/bin/python -m pip install --upgrade pip
-./.venv/bin/python -m pip install -r requirements.txt
 ./.venv/bin/python neuwakeup.py
 ```
 
@@ -72,12 +70,42 @@ python3 -m venv .venv
 2. 阅读终端中的使用说明和警告，按回车继续。
 3. 使用绑定东北大学微信企业号的微信扫描终端二维码。
 4. 在微信中点击“授权登录”，完成后回到终端按回车。
+   程序会验证登录状态；未登录或二维码过期时最多自动重新生成两次。
 5. 默认学期是 `2026-2027-1`，即“2026-2027年秋季学期”。直接按回车使用默认值。
 6. 如需其他学期，输入 `学年-学年-学期`，例如 `2026-2027-2`。
-7. 等待普通课和实验课合并完成，逐项检查终端预览。
-8. 输入 `1`，生成 `schedule.csv`。
+7. 查看完整性报告。没有星期或节次的课程会单独列出，因为这类课程无法写入 WakeUP。
+8. 等待普通课和实验课合并完成，逐项检查终端预览。
+9. 输入 `1`，生成 `schedule.csv`。
 
 生成的文件始终位于 `neuwakeup.py` 所在目录，不受启动命令所在目录影响。
+
+## 可选命令参数
+
+检查版本：
+
+```powershell
+& .\.venv\Scripts\python.exe .\neuwakeup.py --version
+```
+
+不连接教务系统，检查实验课解析和 CSV 写入：
+
+```powershell
+& .\.venv\Scripts\python.exe .\neuwakeup.py --self-check
+```
+
+指定学期：
+
+```powershell
+& .\.venv\Scripts\python.exe .\neuwakeup.py --term 2026-2027-2
+```
+
+指定学期和输出位置。使用 `--output` 后，课程预览完成会直接写入该文件，不再询问导出方式：
+
+```powershell
+& .\.venv\Scripts\python.exe .\neuwakeup.py --term 2026-2027-1 --output .\exports\schedule.csv
+```
+
+macOS/Linux 参数相同，只需把开头替换为 `./.venv/bin/python neuwakeup.py`。
 
 ## 导入 WakeUP
 
@@ -131,6 +159,14 @@ WakeUP 官方 CSV 导入说明：<https://wakeup.fun/doc/import_from_csv.html>
 ### `git`、`py` 或 `python3` 找不到
 
 重新安装 Git 和 Python。Windows 安装 Python 时勾选“Add Python to PATH”，安装完成后重新打开 PowerShell。
+
+### 依赖自动安装失败
+
+确认可以访问 Python 软件源，并确保当前用户对虚拟环境有写入权限。随后执行：
+
+```powershell
+& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
 
 ### 无法访问教务系统或 WebVPN
 
