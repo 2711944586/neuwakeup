@@ -1,0 +1,15 @@
+.venv/
+venv/
+.vscode/
+.idea/
+__pycache__/
+*.py[cod]
+schedule.csv
+*.csv
+.DS_Store
+.build-venv/
+build/
+dist/*
+!dist/NEU-WakeUP.exe
+!dist/NEU-WakeUP-macos-apple-silicon.dmg
+*.spec
